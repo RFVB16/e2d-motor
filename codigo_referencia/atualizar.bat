@@ -92,6 +92,9 @@ echo          ^(aguarde 30s pra propagar^)
 echo ====================================================
 echo.
 
+REM 5. Repositorio do motor (GitHub privado): envia o codigo se mudou. Nao interrompe o painel se falhar.
+call "%PROJETO%\sincronizar_repo.bat"
+
 REM Modo automatico (agendador): nao abre o navegador nem espera
 if /i "%~1"=="auto" exit /b 0
 
