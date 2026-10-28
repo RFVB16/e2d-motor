@@ -1731,6 +1731,10 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
             status_man = 'EXECUTADO'
         bg = COR_STATUS.get(status_man, '#ffffff')
         fc = COR_TEXT.get(status_man, '#000000')
+        # Como no SPPilots: especial já escalado (nome na pauta) em manobra ainda não confirmada = linha cinza
+        if not is_past and str(m.get('status', '')).upper() in ('FUTURO', '') and \
+                any(x.strip() in ESPECIAIS for x in str(m.get('pra_real', '')).split('/')):
+            bg, fc = '#a5a5a5', '#fff'
         # Especiais: NÃO altera fundo da linha — só destaca coluna PRT inline
         # Isso evita o visual "colado" quando especiais aparecem consecutivos
 
@@ -1755,13 +1759,8 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
         esc_e    = _html.escape(esc_str)
 
         # Célula PRT com destaque para especiais
-        if is_esp_man:
-            if is_past:
-                ep_cell = f'<td class="ep" style="background:#1a1a1a;color:#fff;font-weight:bold">{ep_e}</td>'
-            else:
-                ep_cell = f'<td class="ep" style="background:#2e7d32;color:#fff;font-weight:bold">{ep_e}</td>'
-        else:
-            ep_cell = f'<td class="ep">{ep_e}</td>'
+        # (como no SPPilots, o especial aparece sem destaque na célula; a cor vem da linha)
+        ep_cell = f'<td class="ep">{ep_e}</td>'
         _obs = list(dict.fromkeys(m.get('obs_e2d') or []))
         if _obs:
             _tit = _html.escape(' | '.join(_obs))

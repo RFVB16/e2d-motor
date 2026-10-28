@@ -605,6 +605,8 @@ Consequência: o **Seq da saída é a ordem de processamento**, que pode diferir
 
 ### 5.13 Draga: manobras em sequência ficam com o mesmo prático (27/10/2026)
 
+> **Provisório:** regra ainda em definição pela Praticagem (28/10/2026). Implementada como descrita abaixo até a decisão final.
+
 Caso típico: draga que entra, vai até um ponto e volta, várias vezes por dia. Regra da Praticagem: **duas manobras seguidas da draga, em sequência, são feitas pelo mesmo prático, como A e B do mesmo ciclo**, em qualquer combinação (entrada + saída, saída + entrada, com mudança). Se não for em sequência, segue a regra normal.
 
 Implementação (`ep_sim_v3_corrigido.simular_turno`, bloco "DRAGA", antes do laço de manobras):
@@ -619,6 +621,8 @@ Implementação (`ep_sim_v3_corrigido.simular_turno`, bloco "DRAGA", antes do la
 Exemplos no conjunto de teste: HAM 316 (28–29/09/2026, 4 pares, reproduz a E12 real), UTRECHT (26–27/07, 5 pares), HANG JUN 6009 (25/04, 3 pares). Correção de 28/10/2026: a primeira versão contava linhas (e não horários) e juntava as duas linhas de um navio de 2 práticos (MSC AINO, 15/02); corrigido nos itens 1 e 2.
 
 ### 5.14 Giro sem atracar (FB → FB) (27/10/2026)
+
+> **Provisório:** regra ainda em definição pela Praticagem (28/10/2026). Implementada como descrita abaixo até a decisão final.
 
 Manobra em que o navio entra, gira numa bacia e sai sem atracar (ex.: "entrada, giro e saída do TECON"). T pela linha `GIRO <área>` da tabela de T:
 
