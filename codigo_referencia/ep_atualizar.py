@@ -1763,10 +1763,18 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
         ep_cell = f'<td class="ep">{ep_e}</td>'
         _obs = list(dict.fromkeys(m.get('obs_e2d') or []))
         if _obs:
-            _tit = _html.escape(' | '.join(_obs))
-            _curto = ' · '.join(('apertada' if o.startswith('B apertada') else 'dentro do T') for o in _obs)
-            ep_cell = ep_cell.replace('</td>', f'<span class="obsx" title="{_tit}">*</span>'
-                                               f'<br><span class="invi" title="{_tit}">* {_html.escape(_curto)}</span></td>', 1)
+            def _explica(o):
+                cab, det = (o.split(':', 1) + [''])[:2] if ':' in o else (o, '')
+                quem = cab[cab.find('(') + 1:cab.find(')')] if '(' in cab and ')' in cab else ''
+                quem = f' ({quem})' if quem else ''
+                if o.startswith('B apertada'):
+                    return f'Risco de atraso{quem}: pouco tempo entre o fim previsto da A e esta manobra. {det.strip()}'
+                return f'Escalado ainda a bordo{quem}: {det.strip()}'
+            _txt = ' | '.join(_explica(o) for o in _obs)
+            _tit = _html.escape(_txt)
+            ep_cell = ep_cell.replace('</td>', f'<span class="obsx" tabindex="0" title="{_tit}" '
+                                               f'onclick="this.classList.toggle(\'open\')">⚠'
+                                               f'<span class="obsx-txt">{_tit}</span></span></td>', 1)
 
         _inv = m.get('inviavel')
         if _inv is not None and not is_past:
@@ -1951,7 +1959,10 @@ body {{ font-family: "Segoe UI", Arial, sans-serif; font-size: 12px; background:
 .calado {{ font-size: 11px; white-space: nowrap; color: #333; }}
 .dt {{ width: 85px; white-space: nowrap; }}
 .invi {{ background: #ffff00; color: #c00000; font-weight: 700; font-size: 10px; padding: 0 2px; }}
-.obsx {{ background: #ffff00; color: #c00000; font-weight: 800; margin-left: 2px; padding: 0 2px; cursor: help; }}
+.obsx {{ position: relative; color: #c00000; font-weight: 700; margin-left: 3px; cursor: pointer; }}
+.obsx-txt {{ display: none; position: absolute; left: 0; top: 1.4em; z-index: 20; width: 240px; white-space: normal;
+  background: #ffffe0; color: #000; border: 1px solid #000; padding: 4px 6px; font-weight: 400; font-size: 11px; text-align: left; }}
+.obsx.open .obsx-txt {{ display: block; }}
 .ep {{ font-weight: 700; font-size: 14px; color: #1B4F72; letter-spacing: .5px; white-space: nowrap; }}
 .cal, .brd {{ font-size: 10.5px; color: #666; white-space: nowrap; }}
 .esc {{ font-size: 11px; font-family: "Consolas","Courier New",monospace; color: #333;
@@ -2054,7 +2065,7 @@ document.addEventListener('DOMContentLoaded',function(){{try{{if(localStorage.ge
       <table id="projtab" class="hide-esc">
         <thead><tr>
           <th>Navio</th><th>Local</th><th>Horário</th>
-          <th title="* = em observação (manobras confirmadas, a partir da escalação 1 h antes): apertada = risco de atraso; dentro do T = na escalação o prático ainda tinha mais de 30 min de A">PRT</th><th>Calado</th><th>Bordo</th><th>A/B</th><th title="Δt entre inícios: na B, do início da A até o início da B; na A, do início da B anterior até o início da A (mesmo prático, mesmo turno)">Δt</th><th class="esc-col">Escalação</th>
+          <th title="⚠ = em observação (manobras confirmadas, a partir da escalação 1 h antes): risco de atraso, ou escalado ainda a bordo (mais de 30 min de A pela frente). Toque no ⚠ para ver o motivo.">PRT</th><th>Calado</th><th>Bordo</th><th>A/B</th><th title="Δt entre inícios: na B, do início da A até o início da B; na A, do início da B anterior até o início da A (mesmo prático, mesmo turno)">Δt</th><th class="esc-col">Escalação</th>
         </tr></thead>
         <tbody>{proj_html}</tbody>
       </table>
