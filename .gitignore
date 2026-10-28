@@ -13,3 +13,4 @@ codigo_referencia/inputs/escala_grafica.json
 *.log
 ~$*
 codigo_referencia/motor_e2d/esp_atribuicoes.pkl
+*.pkl

@@ -46,3 +46,9 @@ Tabela por semana: período, manobras (média/dia), Δt médio efetivo, posiçõ
 - Funciona em celular.
 - Acesso com login (práticos e administração).
 - Indicação clara de dados desatualizados ou com falha de coleta.
+
+## Relatório por prático (28/10/2026)
+- Clicar no nome do prático (ou na célula A/B) abre uma janela com a comparação E12 real × E2D no turno do prático (48 h, ou o dia, em meio turno).
+- Descanso útil: do fim da manobra (início + T de tabela + lancha até a Atalaia) até 1 h antes do início da seguinte; inclui do início do serviço (07:30) até o acionamento da 1ª e da última até o fim do serviço. Mesmo critério nas duas escalas.
+- Resumo: manobras, maior descanso útil, total, trabalho na madrugada (0h–5h). Só E2D: descanso longo (B → A) e intervalos entre A e B.
+- A comparação vai até o horário em que a E12 já tem nome no SPPILOTS; depois disso, manobras da E2D aparecem em cinza e não entram na conta.

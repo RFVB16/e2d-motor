@@ -1,5 +1,10 @@
 # Histórico de versões
 
+## 28/10/2026 (3)
+- **Painel:** relatório por prático (clicar no nome ou no A/B): E12 real × E2D no turno, descanso útil com o mesmo critério nas duas (fim + lancha até a Atalaia → 1 h antes da próxima); na E2D separa descanso longo e intervalo entre A e B (06).
+- Especial: linha cinza até a manobra começar, preta depois. Símbolo ⚠ em amarelo.
+- Atualização a cada 10 min (`instalar_agendamento.bat`).
+
 ## 28/10/2026 (2)
 - **Escalação congelada** (02, 5.16): a partir de 1 h antes da manobra o prático regular escalado fica fixo. Uma vez que a linha fica vermelha, não muda mais. Registro em `dados/escalacao_congelada.csv`; o motor lê via `sim._FROZEN_KEY`. Congelamento de 28/10 11:40 vale para o passado.
 - **Manobras órfãs**: manobra já iniciada que sumiu da pauta é mantida no painel (não desaparece).

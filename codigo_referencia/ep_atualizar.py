@@ -417,6 +417,95 @@ def ler_planilha():
     return manobras
 
 
+# ── Relatório por prático: E12 real × E2D no turno (descanso útil, mesmo critério nas duas) ──
+_REL = {'d': {}, 'i': {}}
+
+def montar_relatorio(manobras):
+    """Para cada prático regular em serviço perto de hoje: manobras e descanso útil no turno, E12 real × E2D.
+    Descanso útil = do fim da manobra (início + T + lancha até a Atalaia) até 1 h antes do início da seguinte.
+    Conta também do início do serviço (07:30) até o acionamento da 1ª e do fim da última até o fim do serviço."""
+    import pickle as _pk
+    H = pd.Timedelta(hours=1); D0 = pd.Timedelta(hours=7, minutes=30)
+    od = lambda t: (pd.Timestamp(t) - D0).date()
+    try:
+        TT = _pk.load(open(_DIR / 'motor_e2d' / '_turnos_live.pkl', 'rb'))
+    except Exception as e:
+        print(f'[Relatório] escala indisponível: {e}'); return
+    # E12 real: histórico + pauta atual (sem ESPECIAL administrativo)
+    try:
+        h = pd.read_csv(HIST_PATH, dtype=str); h['dt'] = pd.to_datetime(h['datetime'])
+        h = h[['dt', 'Vessel', 'From', 'To', 'Pratico', 'Status']]
+    except Exception:
+        h = pd.DataFrame(columns=['dt', 'Vessel', 'From', 'To', 'Pratico', 'Status'])
+    try:
+        rt = pd.read_csv(PAUTA_RT, dtype=str); rt['dt'] = pd.to_datetime(rt['datetime'])
+        rt = rt[rt['dt'] > (h['dt'].max() if len(h) else pd.Timestamp(0))][['dt', 'Vessel', 'From', 'To', 'Pratico', 'Status']]
+    except Exception:
+        rt = h.iloc[0:0]
+    r12 = pd.concat([h, rt]); r12 = r12[r12['Pratico'].notna() & (r12['Status'].fillna('') != 'ESPECIAL')]
+    r12 = r12.assign(P=r12['Pratico'].astype(str).str.split('/')).explode('P'); r12['P'] = r12['P'].str.strip()
+    r12 = r12[r12['P'] != '']
+    reg = r12[~r12['P'].isin(ESPECIAIS)]
+    corte = reg['dt'].max() if len(reg) else pd.Timestamp(datetime.now())   # até onde a E12 já tem nome
+    e2 = [(pd.Timestamp(m['datetime']), x.strip(), m) for m in manobras for x in str(m.get('pratico', '')).split('/') if x.strip()]
+
+    def fim(dt, de, para): return _fim_b_efetivo(dt, de, para)
+    def calc(lst, ini, fimw):
+        lst = sorted(lst, key=lambda z: z[0]); use = [z for z in lst if z[0] <= corte]
+        gaps = []; prev = ini; prevlab = 'início do serviço'; prevab = ''
+        for dt, end, lab, ab in use:
+            g = (dt - H - prev).total_seconds() / 60
+            if prevlab != 'início do serviço' or g > 0:
+                gaps.append((prevlab, lab, g, 'ciclo' if prevab == 'A' else 'longo'))
+            prev = end; prevlab = lab; prevab = ab
+        fechado = fimw <= corte
+        prox = [z[0] for z in lst if z[0] > corte]
+        lim = min([fimw, corte] + [prox[0] - H] if prox else [fimw, corte])
+        g = (lim - prev).total_seconds() / 60
+        if g > 0:
+            gaps.append((prevlab, 'fim do serviço' if lim == fimw else ('acionamento ' + f'{prox[0]:%d/%m %H:%M}' if prox and lim == prox[0] - H else f'{corte:%d/%m %H:%M} (em andamento)'), g, 'ciclo' if (prevab == 'A' and lim != fimw) else 'longo'))
+        # madrugada (0h–5h): da saída à volta da Atalaia, unindo se < 2 h em terra
+        per = []
+        for dt, end, _, _ in use:
+            if per and dt - per[-1][1] < pd.Timedelta(hours=2): per[-1][1] = max(per[-1][1], end)
+            else: per.append([dt, end])
+        mad = 0.0
+        for a, b in per:
+            d = a.normalize() - pd.Timedelta(days=1)
+            while d <= b:
+                lo, hi = max(a, d), min(b, d + pd.Timedelta(hours=5))
+                if hi > lo: mad += (hi - lo).total_seconds() / 60
+                d += pd.Timedelta(days=1)
+        vals = [max(g[2], 0) for g in gaps]
+        lon = [max(g[2], 0) for g in gaps if g[3] == 'longo']; cic = [max(g[2], 0) for g in gaps if g[3] == 'ciclo']
+        return gaps, dict(n=len(use), maior=max(vals) if vals else 0, total=sum(vals), mad=mad, fechado=fechado,
+                          maior_longo=max(lon) if lon else 0, total_longo=sum(lon), total_ciclo=sum(cic), n_ciclo=len(cic))
+
+    hoje = od(datetime.now()); D = {}; I = {}
+    for t in TT:
+        if not (pd.Timestamp(hoje) - pd.Timedelta(days=4) <= t['dt_ini'] <= pd.Timestamp(hoje) + pd.Timedelta(days=2)): continue
+        for p in set(t['dia1']) | set(t['dia2']):
+            if p in ESPECIAIS: continue
+            dias = ([t['dt_ini']] if p in t['dia1'] else []) + ([t['dt_d2']] if p in t['dia2'] else [])
+            key = f'{p}|{od(dias[0])}'
+            for dd in dias: I[f'{p}|{od(dd)}'] = key
+            if key in D: continue
+            ini = dias[0]; fimw = dias[-1] + pd.Timedelta(days=1)
+            l12 = []
+            for _, r in reg[(reg['P'] == p) & (reg['dt'] >= ini) & (reg['dt'] < fimw)].drop_duplicates(['dt', 'Vessel']).iterrows():
+                l12.append((r['dt'], fim(r['dt'], r['From'], r['To']), f"{r['dt']:%d/%m %H:%M} {str(r['Vessel'])[:18]} ({_local_sp('', r['From'], r['To'])})", ''))
+            l2 = []
+            for dt, x, m in e2:
+                if x == p and ini <= dt < fimw:
+                    l2.append((dt, fim(dt, m['de'], m['para']), f"{dt:%d/%m %H:%M} {str(m['vessel'])[:18]} ({_local_sp('', m['de'], m['para'])})", str(m.get('ab', '')).strip().upper()[:1]))
+            g12, s12 = calc(l12, ini, fimw); g2, s2 = calc(l2, ini, fimw)
+            fmt = lambda L: [dict(t=lab, f=f'{end:%H:%M}', fut=bool(dt > corte), ab=ab) for dt, end, lab, ab in sorted(L, key=lambda z: z[0])]
+            D[key] = dict(p=p, ini=f'{ini:%d/%m %H:%M}', fim=f'{fimw:%d/%m %H:%M}', corte=f'{corte:%d/%m %H:%M}',
+                          m12=fmt(l12), m2=fmt(l2),
+                          g12=[[x, y, round(z), ''] for x, y, z, _ in g12], g2=[[x, y, round(z), w] for x, y, z, w in g2], s12=s12, s2=s2)
+    _REL['d'], _REL['i'] = D, I
+    print(f'[Relatório] {len(D)} turnos de práticos preparados (E12 com nome até {corte:%d/%m %H:%M})')
+
 # ── Info pauta RT ─────────────────────────────────────────────────────────────
 import re as _re_cb
 _CB_HIST = {}   # (datetime, navio) -> (calado, bordo) vindos do histórico (manobras já executadas)
@@ -1731,10 +1820,9 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
             status_man = 'EXECUTADO'
         bg = COR_STATUS.get(status_man, '#ffffff')
         fc = COR_TEXT.get(status_man, '#000000')
-        # Como no SPPilots: especial já escalado (nome na pauta) em manobra ainda não confirmada = linha cinza
-        if not is_past and str(m.get('status', '')).upper() in ('FUTURO', '') and \
-                any(x.strip() in ESPECIAIS for x in str(m.get('pra_real', '')).split('/')):
-            bg, fc = '#a5a5a5', '#fff'
+        # Como no SPPilots: manobra de especial = linha cinza (escalada ou confirmada); preta depois de finalizada
+        if is_esp_man or any(x.strip() in ESPECIAIS for x in str(m.get('pra_real', '')).split('/')):
+            bg, fc = ('#000000', '#fff') if is_past else ('#a5a5a5', '#fff')
         # Especiais: NÃO altera fundo da linha — só destaca coluna PRT inline
         # Isso evita o visual "colado" quando especiais aparecem consecutivos
 
@@ -1760,7 +1848,10 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
 
         # Célula PRT com destaque para especiais
         # (como no SPPilots, o especial aparece sem destaque na célula; a cor vem da linha)
-        ep_cell = f'<td class="ep">{ep_e}</td>'
+        _relp = next((x.strip() for x in str(ep).split('/') if x.strip() and x.strip() not in ESPECIAIS), '')
+        _reld = (pd.Timestamp(m['datetime']) - pd.Timedelta(hours=7, minutes=30)).date()
+        _rela = f' data-p="{_html.escape(_relp)}" data-d="{_reld}"' if _relp else ''
+        ep_cell = f'<td class="ep{" relx" if _relp else ""}"{_rela}>{ep_e}</td>'
         _obs = list(dict.fromkeys(m.get('obs_e2d') or []))
         if _obs:
             def _explica(o):
@@ -1793,7 +1884,7 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
         proj_html += f'''
           <td class="calado">{_html.escape(str(m.get('calado', '') or ''))}</td>
           <td class="brd">{_html.escape(str(m.get('bordo', '') or ''))}</td>
-          <td class="{ab_cl}">{ab_e}</td>
+          <td class="{ab_cl}{' relx' if _relp else ''}"{_rela}>{ab_e}</td>
           <td class="cal">{cal_e}</td>
           <td class="esc esc-col">{esc_e}</td>
         </tr>'''
@@ -1959,7 +2050,18 @@ body {{ font-family: "Segoe UI", Arial, sans-serif; font-size: 12px; background:
 .calado {{ font-size: 11px; white-space: nowrap; color: #333; }}
 .dt {{ width: 85px; white-space: nowrap; }}
 .invi {{ background: #ffff00; color: #c00000; font-weight: 700; font-size: 10px; padding: 0 2px; }}
-.obsx {{ position: relative; color: #c00000; font-weight: 700; margin-left: 3px; cursor: pointer; }}
+.relx {{ cursor: pointer; text-decoration: underline dotted; }}
+#relbox .tg {{ font-size:10px; padding:0 4px; border-radius:3px; color:#fff; }} #relbox .tl {{ background:#2e7d32; }} #relbox .tc {{ background:#8d6e00; }}
+#relbox tr.cic td {{ background:#fff8e1; }}
+#relbox {{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:100; }}
+#relbox .in {{ background:#fff; color:#000; max-width:760px; margin:4vh auto; max-height:90vh; overflow:auto; padding:12px 14px; border-radius:6px; font-size:12px; }}
+#relbox table {{ border-collapse:collapse; width:100%; margin:4px 0 8px; }}
+#relbox td, #relbox th {{ border:1px solid #ccc; padding:2px 5px; text-align:left; vertical-align:top; }}
+#relbox th {{ background:#1f3a5f; color:#fff; }}
+#relbox .fut {{ color:#999; }} #relbox .neg {{ color:#c00000; font-weight:700; }}
+#relbox .x {{ float:right; cursor:pointer; font-size:18px; font-weight:700; }}
+#relbox .cols {{ display:flex; gap:10px; flex-wrap:wrap; }} #relbox .cols > div {{ flex:1 1 330px; }}
+.obsx {{ position: relative; color: #ffd400; text-shadow: 0 0 1px #000, 0 0 1px #000, 0 0 1px #000; font-weight: 700; margin-left: 3px; cursor: pointer; }}
 .obsx-txt {{ display: none; position: absolute; left: 0; top: 1.4em; z-index: 20; width: 240px; white-space: normal;
   background: #ffffe0; color: #000; border: 1px solid #000; padding: 4px 6px; font-weight: 400; font-size: 11px; text-align: left; }}
 .obsx.open .obsx-txt {{ display: block; }}
@@ -2005,7 +2107,7 @@ body {{ font-family: "Segoe UI", Arial, sans-serif; font-size: 12px; background:
 </div>
 
 <div class="stats">
-  <span style="margin-left:auto;opacity:.7">Dados atualizados a cada 15 min · próxima verificação em <span id="countdown">5:00</span></span>
+  <span style="margin-left:auto;opacity:.7">Dados atualizados a cada 10 min · próxima verificação em <span id="countdown">5:00</span></span>
 </div>
 
 <script>
@@ -2082,10 +2184,33 @@ document.addEventListener('DOMContentLoaded',function(){{try{{if(localStorage.ge
      Para atualizar a pauta: clique no favorito "EP Salvar Pauta" no Chrome
      com SPPILOTS aberto, depois rode python ep_atualizar.py no terminal. -->
 
+
+<div id="relbox" onclick="if(event.target===this)this.style.display='none'"><div class="in" id="relin"></div></div>
+<script>
+var REL = __RELJSON__;
+function _h(m){{m=Math.round(m);var s=m<0?'-':'';m=Math.abs(m);return s+Math.floor(m/60)+'h'+String(m%60).padStart(2,'0');}}
+function _lista(L){{if(!L.length)return '<tr><td>nenhuma</td></tr>';return L.map(function(x){{return '<tr class="'+(x.fut?'fut':'')+'"><td>'+(x.ab?'<b>'+x.ab+'</b> ':'')+x.t+'</td><td>'+x.f+'</td></tr>';}}).join('');}}
+function _gaps(G){{if(!G.length)return '<tr><td colspan=2>—</td></tr>';return G.map(function(g){{var tg=g[3]==='longo'?'<span class="tg tl">descanso longo</span> ':(g[3]==='ciclo'?'<span class="tg tc">entre A e B</span> ':'');return '<tr'+(g[3]==='ciclo'?' class="cic"':'')+'><td>'+tg+g[0]+' → '+g[1]+'</td><td class="'+(g[2]<0?'neg':'')+'">'+_h(g[2])+'</td></tr>';}}).join('');}}
+function fecharRel(){{document.getElementById('relbox').style.display='none';}}
+function abrirRel(p,d){{var k=REL.i[p+'|'+d],r=k&&REL.d[k];if(!r){{document.getElementById('relin').innerHTML='<span class="x" onclick="fecharRel()">×</span>Sem relatório para '+p+' neste dia (fora do turno atual).';document.getElementById('relbox').style.display='block';return;}}
+var a=r.s12,b=r.s2,row=function(n,x,y,f){{return '<tr><td>'+n+'</td><td>'+f(x)+'</td><td>'+f(y)+'</td></tr>';}},id=function(v){{return v;}};
+var h='<span class="x" onclick="fecharRel()">×</span>'+
+'<b>'+r.p+' · turno '+r.ini+' → '+r.fim+'</b><br>Descanso útil = do fim da manobra (início + T + lancha até a Atalaia) até 1 h antes do início da seguinte; mesmo critério nas duas escalas. Inclui do início do serviço (07:30) até o acionamento da 1ª e, se o turno já terminou, do fim da última até o fim do serviço.'+
+'<table><tr><th></th><th>E12 (real)</th><th>E2D</th></tr>'+row('Manobras',a.n,b.n,id)+row('Maior descanso útil',a.maior,b.maior,_h)+row('Descanso útil total',a.total,b.total,_h)+row('Trabalho na madrugada (0h–5h)',a.mad,b.mad,_h)+'</table>'+
+'<b>Só E2D</b>: descanso longo (depois da B até a próxima A) — maior '+_h(b.maior_longo)+', total '+_h(b.total_longo)+' · intervalos entre A e B (dentro do ciclo): '+b.n_ciclo+', total '+_h(b.total_ciclo)+'.<br>'+
+(a.fechado?'':'<i>Comparação até '+r.corte+': depois disso a E12 ainda não tem nome. Manobras da E2D após esse horário aparecem em cinza e não entram na conta.</i>')+
+'<div class="cols"><div><b>E12 — manobras</b><table><tr><th>Início · navio</th><th>Fim*</th></tr>'+_lista(r.m12)+'</table><b>E12 — descansos úteis</b><table>'+_gaps(r.g12)+'</table></div>'+
+'<div><b>E2D — manobras</b><table><tr><th>Início · navio</th><th>Fim*</th></tr>'+_lista(r.m2)+'</table><b>E2D — descansos úteis</b><table>'+_gaps(r.g2)+'</table></div></div>'+
+'<small>* Fim = início + T da tabela + lancha até a Atalaia.</small>';
+document.getElementById('relin').innerHTML=h;document.getElementById('relbox').style.display='block';}}
+document.addEventListener('click',function(e){{var t=e.target.closest('.relx');if(!t||e.target.closest('.obsx'))return;abrirRel(t.dataset.p,t.dataset.d);}});
+</script>
 {log_semanal_html}
 </body>
 </html>'''
 
+    import json as _json
+    html = html.replace('__RELJSON__', _json.dumps(_REL, ensure_ascii=False, default=str).replace('</', '<\\/'))
     PAINEL_PATH.write_text(html, encoding='utf-8')
     print(f'[Painel] ep_painel.html gerado')
 
@@ -2132,6 +2257,10 @@ def main():
     except Exception as _e:
         print(f'[Observação] não calculado: {_e}')
     estado_info = ler_estado_info()
+    try:
+        montar_relatorio(manobras)
+    except Exception as _e:
+        print(f'[Relatório] não calculado: {_e}')
 
     gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_min_dia, posicoes_apos_b)
 
