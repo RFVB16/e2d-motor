@@ -588,7 +588,14 @@ def simular_turno(turno, fila_ini, man_df, T_min, T_mud, pares2,
             m_fr = str(man['From']).strip()
             m_to = str(man['To']).strip()
 
+            # ESCALAÇÃO CONGELADA: a partir de 1 h antes da manobra o prático escalado não muda mais
+            # (gravado pelo gerar_2026.py em dados/escalacao_congelada.csv; só regulares)
+            _fz = [c for c in globals().get('_FROZEN_KEY', {}).get(
+                       (str(man['Data']), str(man['Hora']), str(man['Vessel']).strip()), [])
+                   if c not in set(atrib.values())]
             _p_draga = _draga_prat.get(_draga_par[k]) if k in _draga_par else None
+            if _fz and k not in atrib:
+                atrib[k] = _fz[0]
             if not (_p_draga and _p_draga not in ESPECIAIS) and k in _draga_ent and k not in atrib:
                 # 1ª manobra do par da draga: vai para quem está livre e SEM ciclo aberto, para que
                 # as duas manobras formem a A e a B do mesmo ciclo

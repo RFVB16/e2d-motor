@@ -233,6 +233,10 @@ sim._ESP_ATRIB_FORCADAS_KEY = dict(esp_atrib_key)
 if os.environ.get('SEM_FORCA') == '1':   # especiais pelo contador interno do motor (como a b45 OFICIAL)
     sim._ESP_ATRIB_FORCADAS_KEY = {}
 print(f'Atribuicoes forcadas (chave): {len(esp_atrib_key)} chaves')
+# Escalações congeladas (regulares escalados a partir de 1 h antes): {(Data, Hora, Navio): [práticos]}
+_fzp = os.environ.get('FROZEN')
+sim._FROZEN_KEY = pickle.load(open(_fzp, 'rb')) if _fzp and os.path.exists(_fzp) else {}
+print(f'Escalacoes congeladas: {len(sim._FROZEN_KEY)} chaves')
 
 
 # Carregar turnos

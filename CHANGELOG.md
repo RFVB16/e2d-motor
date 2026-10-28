@@ -1,5 +1,10 @@
 # Histórico de versões
 
+## 28/10/2026 (2)
+- **Escalação congelada** (02, 5.16): a partir de 1 h antes da manobra o prático regular escalado fica fixo. Uma vez que a linha fica vermelha, não muda mais. Registro em `dados/escalacao_congelada.csv`; o motor lê via `sim._FROZEN_KEY`. Congelamento de 28/10 11:40 vale para o passado.
+- **Manobras órfãs**: manobra já iniciada que sumiu da pauta é mantida no painel (não desaparece).
+- **Painel:** símbolo ⚠ (com explicação ao passar o mouse ou clicar) no lugar do texto "dentro do T"; linha cinza para especial escalado.
+
 ## 28/10/2026
 - **Regra da draga** (decidida em 27/10): manobras em sequência da draga ficam com o mesmo prático, como A e B (02, 5.13). Corrigido o caso de navio de 2 práticos ser tomado por draga.
 - **Giro sem atracar** (FB → FB): linhas GIRO TECON 90, EMBRAPORT 135, BTP 155, ALEMOA 160 na tabela de T (02, 5.14).

@@ -79,7 +79,20 @@ if not h.empty:
     corte = h.DT.max() + pd.Timedelta(minutes=1)
     if rt.empty or rt.DT.max() < corte:
         print('[AVISO] pauta_rt.csv sem manobras futuras: clique no favorito "EP Salvar Pauta" com o ep_server.py aberto')
-    partes = [h[h.DT < corte]] + ([rt[rt.DT >= corte]] if not rt.empty else [])
+    # manobras já passadas que estão na pauta atual mas ainda não entraram no histórico raspado
+    # (antes ficavam de fora até a próxima raspagem): entram pela pauta atual
+    _orf = rt[(rt.DT < corte) & (rt['Status'].astype(str).str.upper() != 'FUTURO')] if not rt.empty and 'Status' in rt else rt.iloc[0:0]
+    if len(_orf):
+        _hk = {}
+        for _r in h.itertuples():
+            _hk.setdefault((_r.Vessel, str(_r.From).strip(), str(_r.To).strip()), []).append(_r.DT)
+        _ok = [not any(abs((_r.DT - _t).total_seconds()) <= 6 * 3600
+                       for _t in _hk.get((_r.Vessel, str(_r.From).strip(), str(_r.To).strip()), []))
+               for _r in _orf.itertuples()]
+        _orf = _orf[_ok]
+        if len(_orf):
+            print(f'[pauta] {len(_orf)} manobra(s) já feitas ainda fora do histórico: mantidas pela pauta atual')
+    partes = [h[h.DT < corte]] + ([_orf] if len(_orf) else []) + ([rt[rt.DT >= corte]] if not rt.empty else [])
     p = pd.concat(partes, ignore_index=True)
     p['De'] = p['From']; p['Para'] = p['To']
     p['Termino'] = p['Termino'] if 'Termino' in p else ''
@@ -298,15 +311,46 @@ for i in range(len(p)):
 wb.close()
 
 # ── 5. Motor E2D ────────────────────────────────────────────────────────────────
+# Escalação congelada: a partir de 1 h antes da manobra (hora da escalação real) o prático
+# escalado pela E2D fica fixo, mesmo que a pauta anterior mude depois. Só regulares.
+CONG = DIR / 'dados' / 'escalacao_congelada.csv'
+_cg = pd.read_csv(CONG, dtype=str) if CONG.exists() else pd.DataFrame(columns=['DT', 'Vessel', 'Pratico', 'registrado_em'])
+_fz = defaultdict(list)
+for _r in _cg.itertuples():
+    _d = pd.Timestamp(_r.DT)
+    _fz[(_d.strftime('%d/%m/%Y'), _d.strftime('%H:%M'), str(_r.Vessel).strip())].append(str(_r.Pratico).strip())
+pickle.dump(dict(_fz), open(MOTOR / '_congeladas.pkl', 'wb'))
 OUT_M = '_E2D_live.xlsx'
 env = dict(os.environ, PAUTA_FILE=str(PAUTA_M), ESP_FONTE=str(ESP_F), TURNOS=str(TURNOS),
            MARGEM_ENTRADA=str(MARGEM_ENTRADA), MARGEM_OUTRAS=str(MARGEM_OUTRAS), E2D_OUT=OUT_M,
-           FB_OUT=str(MOTOR / '_fallback.pkl'), PYTHONIOENCODING='utf-8', BTP_OV=str(MOTOR / '_giro_T.pkl'))
+           FB_OUT=str(MOTOR / '_fallback.pkl'), PYTHONIOENCODING='utf-8', BTP_OV=str(MOTOR / '_giro_T.pkl'), FROZEN=str(MOTOR / '_congeladas.pkl'))
 r = subprocess.run([sys.executable, 'motor_e2d.py'], cwd=str(MOTOR), env=env, capture_output=True,
                    text=True, encoding='utf-8', errors='replace')
 if r.returncode != 0:
     print(r.stdout[-1500:]); print(r.stderr[-3000:]); sys.exit(1)
-print('[motor]', ' | '.join(l for l in r.stdout.splitlines() if 'Etapa' in l or 'Especiais' in l or 'Fallback' in l))
+print('[motor]', ' | '.join(l for l in r.stdout.splitlines() if 'Etapa' in l or 'Especiais' in l or 'Fallback' in l or 'congeladas' in l))
+
+# grava as escalações que chegaram à hora da escalação (1 h antes) e ainda não estavam congeladas
+try:
+    _agora = pd.Timestamp(dt.datetime.now())
+    _ja = {(pd.Timestamp(a), str(b).strip()) for a, b in zip(_cg.DT, _cg.Vessel)}
+    _novos = defaultdict(list)
+    for _row in openpyxl.load_workbook(MOTOR / OUT_M, read_only=True).worksheets[0].iter_rows(min_row=2, values_only=True):
+        if not isinstance(_row[0], int):
+            continue
+        _d = pd.to_datetime(f'{_row[1]} {_row[2]}', dayfirst=True)
+        _pr, _nv = str(_row[4] or '').strip(), str(_row[5] or '').strip()
+        if _d - pd.Timedelta(hours=1) <= _agora and (_d, _nv) not in _ja and _pr and _pr not in ESP:
+            _novos[(_d, _nv)].append(_pr)
+    if _novos:
+        _add = pd.DataFrame([{'DT': k[0].strftime('%Y-%m-%d %H:%M'), 'Vessel': k[1], 'Pratico': p_,
+                              'registrado_em': _agora.strftime('%Y-%m-%d %H:%M')}
+                             for k, v in _novos.items() for p_ in v])
+        CONG.parent.mkdir(parents=True, exist_ok=True)
+        pd.concat([_cg, _add], ignore_index=True).to_csv(CONG, index=False, encoding='utf-8')
+        print(f'[congela] {len(_novos)} manobra(s) com escalação congelada agora')
+except Exception as _e:
+    print(f'[congela] não gravado: {_e}')
 
 # ── 6. Planilha no formato que o ep_atualizar.py lê ─────────────────────────────
 src = openpyxl.load_workbook(MOTOR / OUT_M, read_only=True).worksheets[0]

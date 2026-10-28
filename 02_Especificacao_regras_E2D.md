@@ -1196,3 +1196,10 @@ Berço ausente desta tabela (inclusive os não cadastrados em `BERCO_ZONE`) → 
 | `VAL` | `VAL` | 45 |
 
 Par (De, Para) ausente → `TM_ZONA` do par de zonas (8.3) → 60.
+
+### 5.16 Escalação congelada (28/10/2026)
+- A partir de 1 h antes do início da manobra, o prático regular escalado fica **fixo**: as simulações seguintes não o alteram. Uma linha vermelha (iniciada) nunca muda de prático.
+- Especiais (JA, SI, CH) não são congelados.
+- Registro: `escalacao_congelada.csv` (DT, Vessel, Pratico, registrado_em). Cada rodada acrescenta as manobras que passaram a 1 h do início.
+- Manobra iniciada que desapareceu da pauta continua exibida (órfã).
+- Limitação: o congelamento anterior a 28/10 11:40 foi reconstruído da simulação então vigente, não do que estava na tela.
