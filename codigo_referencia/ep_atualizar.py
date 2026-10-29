@@ -459,7 +459,7 @@ _REL = {'d': {}, 'i': {}}
 def montar_relatorio(manobras):
     """Para cada prático regular em serviço perto de hoje: manobras e descanso útil no turno, E12 real × E2D.
     Descanso útil = do fim da manobra (início + T + lancha até a Atalaia) até 1 h antes do início da seguinte.
-    Conta também do início do serviço (07:30) até o acionamento da 1ª e do fim da última até o fim do serviço."""
+    Conta também das 07:30 até o 1º acionamento (tipo 'inicio', fora do descanso longo) e do fim da última até o fim do serviço."""
     import pickle as _pk
     H = pd.Timedelta(hours=1); D0 = pd.Timedelta(hours=7, minutes=30)
     od = lambda t: (pd.Timestamp(t) - D0).date()
@@ -486,20 +486,25 @@ def montar_relatorio(manobras):
     e2 = [(pd.Timestamp(m['datetime']), x.strip(), m) for m in manobras for x in str(m.get('pratico', '')).split('/') if x.strip()]
 
     def fim(dt, de, para): return _fim_b_efetivo(dt, de, para)
+    _ler_canceladas()
     def calc(lst, ini, fimw):
         lst = sorted(lst, key=lambda z: z[0]); use = [z for z in lst if z[0] <= corte]
-        gaps = []; prev = ini; prevlab = 'início do serviço'; prevab = ''
+        gaps = []; prev = ini; prevlab = f'{ini:%H:%M}'; prevab = ''; prim = True
         for dt, end, lab, ab in use:
+            lab = lab[:11] + (' (cancelada)' if ab == 'X' else '')   # descansos: só data e hora (sem navio e berço)
             g = (dt - H - prev).total_seconds() / 60
-            if prevlab != 'início do serviço' or g > 0:
-                gaps.append((prevlab, lab, g, 'ciclo' if prevab == 'A' else 'longo'))
-            prev = end; prevlab = lab; prevab = ab
+            if prim:   # das 07:30 até o 1º acionamento (1 h antes da 1ª manobra): não é descanso longo (29/10/2026)
+                if g > 0:
+                    gaps.append((prevlab, f'1º acionamento {dt - H:%d/%m %H:%M}', g, 'inicio'))
+            else:
+                gaps.append((prevlab, lab, g, 'canc' if prevab == 'X' else ('ciclo' if prevab == 'A' else 'longo')))
+            prev = end; prevlab = lab; prevab = ab; prim = False
         fechado = fimw <= corte
         prox = [z[0] for z in lst if z[0] > corte]
         lim = min([fimw, corte] + [prox[0] - H] if prox else [fimw, corte])
         g = (lim - prev).total_seconds() / 60
         if g > 0:
-            gaps.append((prevlab, 'fim do serviço' if lim == fimw else ('acionamento ' + f'{prox[0]:%d/%m %H:%M}' if prox and lim == prox[0] - H else f'{corte:%d/%m %H:%M} (em andamento)'), g, 'ciclo' if (prevab == 'A' and lim != fimw) else 'longo'))
+            gaps.append((prevlab, 'fim do serviço' if lim == fimw else ('acionamento ' + f'{prox[0]:%d/%m %H:%M}' if prox and lim == prox[0] - H else f'{corte:%d/%m %H:%M} (em andamento)'), g, 'inicio' if prim else ('canc' if prevab == 'X' else ('ciclo' if (prevab == 'A' and lim != fimw) else 'longo'))))
         # madrugada (0h–5h): da saída à volta da Atalaia, unindo se < 2 h em terra
         per = []
         for dt, end, _, _ in use:
@@ -514,7 +519,7 @@ def montar_relatorio(manobras):
                 d += pd.Timedelta(days=1)
         vals = [max(g[2], 0) for g in gaps]
         lon = [max(g[2], 0) for g in gaps if g[3] == 'longo']; cic = [max(g[2], 0) for g in gaps if g[3] == 'ciclo']
-        return gaps, dict(n=len(use), maior=max(vals) if vals else 0, total=sum(vals), mad=mad, fechado=fechado,
+        return gaps, dict(n=sum(1 for z in use if z[3] != 'X'), maior=max(vals) if vals else 0, total=sum(vals), mad=mad, fechado=fechado,
                           maior_longo=max(lon) if lon else 0, total_longo=sum(lon), total_ciclo=sum(cic), n_ciclo=len(cic))
 
     hoje = od(datetime.now()); D = {}; I = {}
@@ -534,11 +539,16 @@ def montar_relatorio(manobras):
             for dt, x, m in e2:
                 if x == p and ini <= dt < fimw:
                     l2.append((dt, fim(dt, m['de'], m['para']), f"{dt:%d/%m %H:%M} {str(m['vessel'])[:18]} ({_local_sp('', m['de'], m['para'])})", str(m.get('ab', '')).strip().upper()[:1]))
+            # cancelada depois da escalação: o descanso vai até o acionamento dela e recomeça no horário dela
+            for (cd, cv), cl in _CANC_LIN.items():
+                for cp, cab in cl:
+                    if cp == p and ini <= cd < fimw:
+                        l2.append((cd, cd, f"{cd:%d/%m %H:%M} {cv[:18]} (cancelada)", 'X'))   # X = cancelada: não conta como manobra
             g12, s12 = calc(l12, ini, fimw); g2, s2 = calc(l2, ini, fimw)
-            fmt = lambda L: [dict(t=lab, f=f'{end:%H:%M}', fut=bool(dt > corte), ab=ab) for dt, end, lab, ab in sorted(L, key=lambda z: z[0])]
+            fmt = lambda L: [dict(t=lab, f='' if ab == 'X' else f'{end:%H:%M}', fut=bool(dt > corte), ab='' if ab == 'X' else ab) for dt, end, lab, ab in sorted(L, key=lambda z: z[0])]
             D[key] = dict(p=p, ini=f'{ini:%d/%m %H:%M}', fim=f'{fimw:%d/%m %H:%M}', corte=f'{corte:%d/%m %H:%M}',
                           m12=fmt(l12), m2=fmt(l2),
-                          g12=[[x, y, round(z), ''] for x, y, z, _ in g12], g2=[[x, y, round(z), w] for x, y, z, w in g2], s12=s12, s2=s2)
+                          g12=[[x, y, round(z), w if w in ('inicio', 'canc') else ''] for x, y, z, w in g12], g2=[[x, y, round(z), w] for x, y, z, w in g2], s12=s12, s2=s2)
     _REL['d'], _REL['i'] = D, I
     print(f'[Relatório] {len(D)} turnos de práticos preparados (E12 com nome até {corte:%d/%m %H:%M})')
 
@@ -2300,7 +2310,7 @@ function fecharRel(){{document.getElementById('relbox').style.display='none';}}
 function abrirRel(p,d){{var k=REL.i[p+'|'+d],r=k&&REL.d[k];if(!r){{document.getElementById('relin').innerHTML='<span class="x" onclick="fecharRel()">×</span>Sem relatório para '+p+' neste dia (fora do turno atual).';document.getElementById('relbox').style.display='block';return;}}
 var a=r.s12,b=r.s2,row=function(n,x,y,f){{return '<tr><td>'+n+'</td><td>'+f(x)+'</td><td>'+f(y)+'</td></tr>';}},id=function(v){{return v;}};
 var h='<span class="x" onclick="fecharRel()">×</span>'+
-'<b>'+r.p+' · turno '+r.ini+' → '+r.fim+'</b><br>Descanso útil = do fim da manobra (início + T + lancha até a Atalaia) até 1 h antes do início da seguinte; mesmo critério nas duas escalas. Inclui do início do serviço (07:30) até o acionamento da 1ª e, se o turno já terminou, do fim da última até o fim do serviço.'+
+'<b>'+r.p+' · turno '+r.ini+' → '+r.fim+'</b><br>Descanso útil = do fim da manobra (início + T + lancha até a Atalaia) até 1 h antes do início da seguinte; mesmo critério nas duas escalas. Inclui das 07:30 até o 1º acionamento (1 h antes da 1ª manobra; não conta como descanso longo) e, se o turno já terminou, do fim da última até o fim do serviço.'+
 '<table><tr><th></th><th>E12 (real)</th><th>E2D</th></tr>'+row('Manobras',a.n,b.n,id)+row('Maior descanso útil',a.maior,b.maior,_h)+row('Descanso útil total',a.total,b.total,_h)+row('Trabalho na madrugada (0h–5h)',a.mad,b.mad,_h)+'</table>'+
 '<b>Só E2D</b>: descanso longo (depois da B até a próxima A) — maior '+_h(b.maior_longo)+', total '+_h(b.total_longo)+' · intervalos entre A e B (dentro do ciclo): '+b.n_ciclo+', total '+_h(b.total_ciclo)+'.<br>'+
 (a.fechado?'':'<i>Comparação até '+r.corte+': depois disso a E12 ainda não tem nome. Manobras da E2D após esse horário aparecem em cinza e não entram na conta.</i>')+
