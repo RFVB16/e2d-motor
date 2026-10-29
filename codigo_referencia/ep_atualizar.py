@@ -1244,6 +1244,20 @@ COR_TEXT = {
 }
 
 
+def _dt_html(cal, ab):
+    """Coluna Δt: o Δt da manobra A é o descanso longo -> negrito verde (pedido do Rodrigo, 29/10/2026).
+    Navio de 2 práticos ('ON 3h00 / BR 1h30' com A/B 'A/B'): destaca só a parte de quem está em A."""
+    import html as _h
+    cal = str(cal or ''); ab = str(ab or '').upper()
+    partes = cal.split(' / '); abs_ = [x.strip() for x in ab.split('/')]
+    if len(partes) == len(abs_) and len(partes) > 1:
+        return ' / '.join(f'<b class="dl-a">{_h.escape(t)}</b>' if a == 'A' and t.strip() else _h.escape(t)
+                          for t, a in zip(partes, abs_))
+    if cal.strip() and abs_ and all(a == 'A' for a in abs_):
+        return f'<b class="dl-a">{_h.escape(cal)}</b>'
+    return _h.escape(cal)
+
+
 def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_min_dia=None, posicoes_apos_b=None):
     if deltas_min_dia is None:
         deltas_min_dia = []
@@ -1808,7 +1822,7 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
                 # Concatena A/B (cada pratico pode ter status A/B diferente)
                 ab1 = str(m_ant.get('ab', '')).strip()
                 ab2 = str(m.get('ab', '')).strip()
-                if ab2 and ab1 != ab2:
+                if ab2:   # navio de 2 práticos: mostra os dois status sempre (A/B, e também A/A e B/B)
                     m_ant['ab'] = f'{ab1}/{ab2}' if ab1 else ab2
                 # Concatena proxima: cada pratico tem sua propria proxima manobra
                 # DL de dupla: mostra cada prático com o seu valor (ex.: 'ED 19h')
@@ -1910,7 +1924,7 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
           <td class="calado">{_html.escape(str(m.get('calado', '') or ''))}</td>
           <td class="brd">{_html.escape(str(m.get('bordo', '') or ''))}</td>
           <td class="{ab_cl}{' relx' if _relp else ''}"{_rela}>{ab_e}</td>
-          <td class="cal">{cal_e}</td>
+          <td class="cal">{_dt_html(cal, ab)}</td>
           <td class="esc esc-col">{esc_e}</td>
         </tr>'''
 
@@ -1935,7 +1949,7 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
                     m_ant['pratico'] = p1 + '/' + p2 if p1 else p2
                 ab1 = str(m_ant.get('ab', '')).strip()
                 ab2 = str(m.get('ab', '')).strip()
-                if ab2 and ab1 != ab2:
+                if ab2:   # navio de 2 práticos: mostra os dois status sempre (A/B, e também A/A e B/B)
                     m_ant['ab'] = f'{ab1}/{ab2}' if ab1 else ab2
                 # DL de dupla: mostra cada prático com o seu valor (ex.: 'ED 19h')
                 partes = m_ant.get('_dl_partes') or [(p1.split('/')[0].strip(), str(m_ant.get('proxima', '')).strip())]
@@ -1978,7 +1992,7 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
           <td class="dt">{dt_s}</td>
           <td class="ep">{ep_e}</td>
           <td class="{ab_cl}">{ab_e}</td>
-          <td class="cal">{cal_e}</td>
+          <td class="cal">{_dt_html(cal, ab)}</td>
         </tr>'''
 
     if not hist_html:
@@ -2090,6 +2104,7 @@ body {{ font-family: "Segoe UI", Arial, sans-serif; font-size: 12px; background:
 .obsx-txt {{ display: none; position: absolute; left: 0; top: 1.4em; z-index: 20; width: 240px; white-space: normal;
   background: #ffffe0; color: #000; border: 1px solid #000; padding: 4px 6px; font-weight: 400; font-size: 11px; text-align: left; }}
 .obsx.open .obsx-txt {{ display: block; }}
+.dl-a {{ color: #006100; font-weight: 800; }}
 .ep {{ font-weight: 700; font-size: 14px; color: #1B4F72; letter-spacing: .5px; white-space: nowrap; }}
 .cal, .brd {{ font-size: 10.5px; color: #666; white-space: nowrap; }}
 .esc {{ font-size: 11px; font-family: "Consolas","Courier New",monospace; color: #333;
