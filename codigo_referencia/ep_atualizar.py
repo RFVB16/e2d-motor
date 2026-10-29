@@ -401,6 +401,48 @@ def merge_pauta():
         print(f'[Merge] ERRO: {e}')
 
 
+# ── Pauta lida de outra página (29/10/2026) ──────────────────────────────────
+PAUTA_BOA = _DIR / 'dados' / 'pauta_rt_ultima_boa.csv'
+
+
+def validar_pauta_rt():
+    """Recusa uma pauta_rt.csv que não é a pauta de serviço atual (ex.: 29/10 15:03, lida quando a aba do
+    SPPilots mostrava outra consulta: 73 manobras passadas que não existem no histórico). Critério: entre as
+    linhas anteriores à última manobra do histórico, menos da metade acha o mesmo navio no histórico (±6 h),
+    com pelo menos 5 linhas assim. Recusada: guarda em dados/pauta_rejeitada_<data hora>.csv e volta a
+    última pauta boa; aceita: vira a nova 'última boa'."""
+    import shutil
+    try:
+        if not PAUTA_RT.exists() or not HIST_PATH.exists():
+            return
+        rt = pd.read_csv(PAUTA_RT, dtype=str)
+        h = pd.read_csv(HIST_PATH, dtype=str, usecols=['datetime', 'Vessel'])
+        h['dt'] = pd.to_datetime(h['datetime'], errors='coerce'); rt['dt'] = pd.to_datetime(rt['datetime'], errors='coerce')
+        corte = h['dt'].max()
+        ant = rt[rt['dt'] < corte - pd.Timedelta(hours=1)]
+        hv = {}
+        for v, t in zip(h['Vessel'].astype(str).str.strip(), h['dt']):
+            if pd.notna(t) and t >= corte - pd.Timedelta(days=4):
+                hv.setdefault(v, []).append(t)
+        ach = sum(1 for v, t in zip(ant['Vessel'].astype(str).str.strip(), ant['dt'])
+                  if any(abs((t - x).total_seconds()) <= 6 * 3600 for x in hv.get(v, [])))
+        if len(ant) >= 5 and ach < 0.5 * len(ant):
+            PAUTA_BOA.parent.mkdir(parents=True, exist_ok=True)
+            dest = PAUTA_BOA.parent / f'pauta_rejeitada_{datetime.now():%Y-%m-%d_%H%M}.csv'
+            shutil.copy(PAUTA_RT, dest)
+            print(f'[AVISO] pauta_rt.csv recusada: {len(ant) - ach} de {len(ant)} manobras passadas não estão no histórico '
+                  f'(a aba do SPPilots devia estar em outra página). Guardada em {dest.name}.')
+            if PAUTA_BOA.exists():
+                shutil.copy(PAUTA_BOA, PAUTA_RT)
+                print('[AVISO] usando a última pauta boa.')
+            return False
+        PAUTA_BOA.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(PAUTA_RT, PAUTA_BOA)
+        return True
+    except Exception as e:
+        print(f'[pauta] validação não feita: {e}')
+
+
 # ── Rodar gerar_2026.py ───────────────────────────────────────────────────────
 def rodar_simulacao():
     print('\n[Simulação] Rodando gerar_2026_corrigido.py...')
@@ -2356,6 +2398,7 @@ def main():
 
     senha = obter_senha()
     coletar_sppilots(senha)
+    validar_pauta_rt()
     merge_pauta()
 
     if not rodar_simulacao():

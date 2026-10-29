@@ -1,6 +1,7 @@
 # Histórico de versões
 
 ## 29/10/2026
+- **Painel recusa pauta de outra página:** se a maioria das manobras já passadas da `pauta_rt.csv` não existe no histórico (mín. 5), ela é guardada em `dados/pauta_rejeitada_<data hora>.csv` e o painel usa a última pauta boa (`dados/pauta_rt_ultima_boa.csv`). Caso: 29/10 15:03, 73 manobras de outra consulta congeladas por engano (removidas).
 - **Painel, relatório por prático:** o trecho das 07:30 até o 1º acionamento aparece como "07:30 → 1º acionamento" e não conta mais como descanso longo; a manobra cancelada entra no relatório (o descanso vai até o acionamento dela; não conta como manobra).
 - **Painel:** a manobra cancelada depois da escalação aparece em verde, com o prático escalado e, na coluna A/B, o que ela seria (A ou B); o Δt (descanso) vai até o horário da cancelada, e a manobra seguinte conta a partir dela (06; 02, 5.17).
 - **Correção:** manobra branca (`FUTURO`) atrasada, já passada do horário e ainda na pauta, continua no painel e no motor (antes sumia). Caso KACEY 29/10 11:30 (SI): sem ela a previsão da E12 punha o SI na manobra seguinte (SUPER TOMIYASU 15:00) (02, 5.16).
