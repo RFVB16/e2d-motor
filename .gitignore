@@ -1,16 +1,10 @@
-# segredos — nunca versionar
+# nunca versionar credenciais
 config.json
-*.secret
-.env
-# gerados
+*.key
+# gerados pelos testes e pelo Python
 __pycache__/
 *.pyc
 testes/saida_referencia.csv
+codigo_referencia/motor_e2d/esp_atribuicoes.pkl
 codigo_referencia/motor_e2d/_*.pkl
 codigo_referencia/motor_e2d/_*.xlsx
-codigo_referencia/dados/
-codigo_referencia/inputs/escala_grafica.json
-*.log
-~$*
-codigo_referencia/motor_e2d/esp_atribuicoes.pkl
-*.pkl

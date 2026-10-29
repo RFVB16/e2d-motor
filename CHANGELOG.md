@@ -1,16 +1,20 @@
 # Histórico de versões
 
-## 28/10/2026 (3)
-- **Painel:** relatório por prático (clicar no nome ou no A/B): E12 real × E2D no turno, descanso útil com o mesmo critério nas duas (fim + lancha até a Atalaia → 1 h antes da próxima); na E2D separa descanso longo e intervalo entre A e B (06).
-- Especial: linha cinza até a manobra começar, preta depois. Símbolo ⚠ em amarelo.
-- Atualização a cada 10 min (`instalar_agendamento.bat`).
-
-## 28/10/2026 (2)
-- **Escalação congelada** (02, 5.16): a partir de 1 h antes da manobra o prático regular escalado fica fixo. Uma vez que a linha fica vermelha, não muda mais. Registro em `dados/escalacao_congelada.csv`; o motor lê via `sim._FROZEN_KEY`. Congelamento de 28/10 11:40 vale para o passado.
-- **Manobras órfãs**: manobra já iniciada que sumiu da pauta é mantida no painel (não desaparece).
-- **Painel:** símbolo ⚠ (com explicação ao passar o mouse ou clicar) no lugar do texto "dentro do T"; linha cinza para especial escalado.
+## 29/10/2026
+- **Painel:** na coluna Δt, o valor da manobra A (descanso longo) aparece em negrito amarelo com contorno preto (06).
+- **Painel:** em navio de 2 práticos a coluna A/B mostra sempre os dois status (A/A e B/B, além de A/B) (06).
+- **Painel refeito do zero** com as regras corretas; o congelamento anterior (gerado com a troca direta) foi descartado e o congelamento recomeça a partir daí (02, 5.16).
+- **Congelamento pela cor da linha** (decisão da Praticagem): a manobra fica fixa quando começa (azul) ou termina (vermelha), e não mais 1 h antes. Branca e lilás ainda podem mudar, inclusive com atraso. Novo arquivo `dados/escalacao_finalizada.csv` (02, 5.16).
+- **Correção do congelamento:** manobra de especial (mapa da E12) nunca é congelada; o especial prevalece (02, 5.16). Caso: GOLDEN THETIS 29/10 10:30 (AG congelado no lugar do JA). Novo teste 3 em `testes/testar_congelamento.py`. Resultado do teste de 2026 não muda (100%).
+- **Nova escalação volta ao modelo original (substituição indireta)**, o da apresentação e da planilha de 2025 (decisão da Praticagem). A troca direta, adotada em 24/10, fica disponível só com `REORD=direto`, para comparação (02, 5.6). Conferido: o código da regra indireta dá o mesmo resultado que a versão de 21/04/2026 em 30.000 casos aleatórios.
+- `testes/esperado` regerado com a regra indireta. O esperado da troca direta foi mantido em `testes/esperado_alternativo/` e continua reproduzível (100% com `REORD=direto`).
 
 ## 28/10/2026
+- **Escalação congelada** (decidida em 28/10): a partir de 1 h antes da manobra, o prático regular escalado fica fixo (`dados/escalacao_congelada.csv`, variável `FROZEN` no motor) (02, 5.16). Congelamento inicial 28/10 11:40; o passado anterior não foi reconstruído. Novo `testes/testar_congelamento.py`.
+- **Manobras já iniciadas fora do histórico ("órfãs")** continuam no painel (02, 5.16).
+- **Painel:** o ⚠ substitui o asterisco (passar o mouse ou tocar mostra "Risco de atraso" / "Escalado ainda a bordo"); especial escalado e não confirmado aparece em linha cinza (06).
+- **Painel:** o giro sem atracar (FB → FB) passa a usar o T das linhas `GIRO …` no fim efetivo, na coluna lateral, no "⚠ livre hh:mm" e no ⚠ de observação (antes, 60 min) (02, 5.14).
+- `testes/esperado` **não mudou**: o conjunto de teste não usa congelamento e continua 100% igual (11.320 manobras).
 - **Regra da draga** (decidida em 27/10): manobras em sequência da draga ficam com o mesmo prático, como A e B (02, 5.13). Corrigido o caso de navio de 2 práticos ser tomado por draga.
 - **Giro sem atracar** (FB → FB): linhas GIRO TECON 90, EMBRAPORT 135, BTP 155, ALEMOA 160 na tabela de T (02, 5.14).
 - **Escala real** lida da escala gráfica do SPPILOTS (provisório; em produção, ler do banco) (02, 5.15).

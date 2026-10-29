@@ -497,49 +497,47 @@ remapear contadores de exibição dos especiais: chave Y_d1[i] → Y_d2[i]
 
 Se o conjunto de práticos de D1 e D2 for igual (mesmas pessoas, mesmo que em outra ordem de slots), **a fila continua como estava**. `ultima_esc` aqui é a escalação depois da última manobra do D1.
 
-### 5.6 Nova escalação (`nova_escalacao.nova_escalacao(ultima_esc, saindo, entrando)`) — TROCA DIRETA
+### 5.6 Nova escalação (`nova_escalacao.nova_escalacao(ultima_esc, saindo, entrando)`) — SUBSTITUIÇÃO INDIRETA (modelo original)
 
-**Regra em vigor desde 23/10/2026.** É usada na troca de pessoas entre D1 e D2 (5.5) e entre turnos (4.2). Os parâmetros `saindo` e `entrando` são as listas de 12 slots, com especiais.
-
-**Critério (definido pela Praticagem):** quem continua trabalhando deve ter a **menor mudança possível de posição** (e, portanto, de descanso).
+**Regra em vigor:** é o modelo original, o da apresentação e da planilha de 2025. De 23 a 29/10/2026 o protótipo usou a troca direta (ver "Alternativa não usada", abaixo); em 29/10/2026 a Praticagem decidiu voltar ao modelo original. A regra é usada na troca de pessoas entre D1 e D2 (5.5) e entre turnos (4.2). `saindo` e `entrando` são as listas de 12 slots, com especiais: a posição i de `entrando` é quem passa a ocupar o slot i.
 
 ```
 remover vazios/'?' ; n ← min(len(saindo), len(entrando)) ; truncar as duas em n
-slot_sai[p] ← índice de p em saindo
+q_entra[saindo[i]]   ← entrando[i]     (quem entra no slot do sainte)
+q_subst[entrando[i]] ← saindo[i]       (de quem o entrante tomou o slot)
 permanece ← entrando ∩ saindo ; novos ← (entrando − saindo) − ESPECIAIS
-função entra_no_lugar(L):            (L = sainte)
-    j ← slot_sai[L] ; visto ← {}
-    repetir:
-        q ← entrando[j]
-        se q é vazio ou já visto: devolver nada
-        se q ∈ novos: devolver q
-        se q estava em saindo (remanescente que mudou de slot): j ← slot_sai[q]   (segue a cadeia)
-        senão (especial): devolver nada
-esc ← parse(ultima_esc) ; final ← [] ; usados ← {}
+esc ← parse(ultima_esc) ; final ← [] ; inseridos ← {}
 para cada (p, estado) em esc, na ordem:
     se p ∈ ESPECIAIS: pular
-    se p ∈ saindo e p ∉ entrando:                  (sainte)
-        q ← entra_no_lugar(p)
-        se q existe e q ∉ usados: inserir q (na posição de p)
-        (se não existe: a posição do sainte é descartada)
-    senão se p ∉ usados: inserir p                 (remanescente: mantém a posição)
+    se p ∈ permanece:                                   (remanescente)
+        para cada e em entrando, na ordem:
+            se e ∈ novos, e ∉ inseridos e q_subst[e] = p: inserir e
+        se p ∉ inseridos: inserir p (estado por status_valido)
+    senão se p ∈ saindo:                                (sainte)
+        s ← q_entra[p]
+        se s ∈ novos e s ∉ inseridos: inserir s (na posição de p)
+        (se s é remanescente ou especial: nada; a posição do sainte some)
+    senão se p ∉ inseridos: inserir p (estado por status_valido)
 anexar ao fim os novos ainda não inseridos, na ordem de entrando
-manter só os 12 primeiros
+remover repetidos ; manter só os 12 primeiros
 ```
 
 Resumo prático:
 
-- **Remanescentes não mudam de posição** (salvo pelo efeito de saídas sem substituto à frente deles).
-- Cada sainte é substituído, **na mesma posição da fila**, pelo entrante do seu slot. Se o slot do sainte passou a um remanescente que mudou de slot, segue-se a cadeia até chegar a um entrante (substituição indireta resolvida na posição do sainte).
-- **Sainte com B pendente:** o entrante herda a posição dele (mesmo que na frente); o sainte, quando voltar, entra como entrante pendente (5.4, Camada 2).
+- Sainte cujo slot passa a um **novo**: o novo entra **na posição do sainte**.
+- Sainte cujo slot passa a um **remanescente que mudou de slot**: a posição do sainte **some** e os de trás sobem uma posição. O novo que ficou com o slot antigo desse remanescente entra **logo antes dele** (o remanescente "puxa" o entrante para junto de si).
 - **Slot do sainte passou a um especial:** a posição do sainte é **descartada** e os de trás sobem.
-- **Entrante em slot que era de especial** (ou sem posição herdada): vai para o **fim**.
-- Exemplos verificados:
+- **Entrante sem posição herdada** (ex.: em slot que era de especial): vai para o **fim**.
+- **Sainte com B pendente** cujo slot passa a um novo: o novo herda a posição dele, mesmo que na frente; o sainte, quando voltar, entra como entrante pendente (5.4, Camada 2).
+- Os estados `(…)` são descartados pelo motor; só a **ordem** importa. O resultado nunca contém especiais.
+- Exemplos (calculados com o código em 29/10/2026):
   - `ultima_esc = "B(09:30) > C > JA(3) > A > D"`, saindo `[A,B,JA,C,D]`, entrando `[E,F,SI,G,H]` → `F > G > E > H`.
   - Mesma `ultima_esc`, entrando `[A,B,JA,X,D]` → `B > X > A > D`.
-  - 08/10 (slide 3): fim do dia `SP > LZ > FX > FS > LE > HI > LB > LT > LG > ZI > AG > CM`; saem FX e AG; LB muda do slot 5 para o 11 (slot de FX); NI entra no slot 5; LC no slot 12 → `SP > LZ > NI > FS > LE > HI > LB > LT > LG > ZI > LC > CM` (FS, LE e HI **não mudam**; na regra antiga subiam uma posição).
-- Os estados `(…)` são descartados pelo motor; só a **ordem** importa. O resultado nunca contém especiais.
-- **Regra antiga** (substituição indireta: o entrante entra antes do remanescente que ocupou o slot do sainte) disponível com `REORD=indireta`, só para comparação. Em 2026 ela fazia remanescentes perderem 1–2 posições em 171 casos (81 viradas); com a troca direta, isso deixa de ocorrer. Indicadores agregados (descanso longo, dias de pico, manobras por dia trabalhado) praticamente iguais.
+  - 08/10 (slide 3): fim do dia `SP > LZ > FX > FS > LE > HI > LB > LT > LG > ZI > AG > CM`; saem FX e AG; LB muda do slot 5 para o 11 (slot de FX); NI entra no slot 5; LC no slot 12 → `SP > LZ > FS > LE > HI > NI > LB > LT > LG > ZI > LC > CM` (FS, LE e HI sobem uma posição; NI entra logo antes de LB).
+  - Caso simples: fila `X > B > C > R > D > E > F > G`; X sai, R passa ao slot de X e N entra no slot de R → `B > C > N > R > D > E > F > G`.
+- Conferência: o código atual dá o mesmo resultado que a versão de 21/04/2026 (anterior à troca direta) em 30.000 casos aleatórios.
+
+**Alternativa não usada: troca direta** (`REORD=direto`, usada no protótipo de 23 a 29/10/2026). Cada sainte é substituído, na mesma posição da fila, pelo entrante do seu slot, seguindo a cadeia de slots; os remanescentes não mudam de posição. Exemplos: 08/10 → `SP > LZ > NI > FS > LE > HI > LB > LT > LG > ZI > LC > CM`; caso simples → `N > B > C > R > D > E > F > G`. Em 2026 ela evitava que remanescentes perdessem 1 a 2 posições em 171 casos (81 viradas), com indicadores agregados praticamente iguais. O resultado esperado com ela está em `testes/esperado_alternativo/E2D_esperado_troca_direta.csv` (reproduz 100% com `REORD=direto`).
 
 ### 5.7 B pendente na virada de turno (entre turnos)
 
@@ -635,7 +633,7 @@ Manobra em que o navio entra, gira numa bacia e sai sem atracar (ex.: "entrada, 
 
 Base: T ≈ 33 + 13,3 × d (d = distância da estação de praticagem à bacia de giro, em milhas; velocidade 9 nós, 1 milha para reduzir e 1 para retomar, giro de 20 min). Distâncias informadas pela Praticagem: Embraport 7,5 nm; bacia do BTP 9 nm.
 
-Área: `gerar_2026.py` procura no texto da pauta (colunas OBS/Agente/Celulas) as palavras EMBRAPORT/DP WORLD, BTP, ALEMOA, TECON/SANTOS BRASIL; sem área identificada, GIRO TECON. Resultado em `motor_e2d/_giro_T.pkl` (chave `(AAAA-MM-DD HH:MM, 'FB', 'FB')`), passado ao motor pela variável `BTP_OV`. **[Ponto de atenção]** o painel ainda usa 60 min para o giro no cálculo do DL e da coluna lateral.
+Área: `gerar_2026.py` procura no texto da pauta (colunas OBS/Agente/Celulas) as palavras EMBRAPORT/DP WORLD, BTP, ALEMOA, TECON/SANTOS BRASIL; sem área identificada, GIRO TECON. Resultado em `motor_e2d/_giro_T.pkl` (chave `(AAAA-MM-DD HH:MM, 'FB', 'FB')`), passado ao motor pela variável `BTP_OV`. O painel lê o mesmo `_giro_T.pkl` (função `_gT_m` de `ep_atualizar.py`, desde 28/10/2026) para o fim efetivo da manobra, a disponibilidade da coluna lateral, o "⚠ livre hh:mm" e o ⚠ de observação. Antes disso, o painel usava 60 min para qualquer FB → FB.
 
 ### 5.15 Escala real pela escala gráfica do SPPILOTS (provisório, 25/10/2026)
 
@@ -647,6 +645,21 @@ Hoje o único lugar onde se vê quem realmente trabalha em cada dia (com as troc
 - Grava `inputs/escala_grafica.json` (`{"AAAA-MM-DD": [12 siglas ou null]}`).
 
 **Em produção isso não deve existir:** a escala e as trocas estão no banco do SPPILOTS, de onde a imagem é gerada. Basta ler de lá e montar os turnos (5.10) no mesmo formato.
+
+### 5.16 Escalação congelada e manobras já iniciadas fora do histórico (28/10/2026)
+
+**Escalação congelada.** Regra da Praticagem (29/10/2026): **manobra que já começou ou já terminou não muda mais, porque é passado.** O protótipo recalcula tudo a cada rodada; sem o congelamento, uma mudança na pauta (atraso, cancelamento, navio novo) trocava o nome de quem já tinha feito a manobra.
+
+1. **Quando congela.** Quando a linha fica **azul** na pauta do SPPILOTS (manobra começou: `PROXIMO`/`CONFIRMADO`) ou **vermelha** (terminou: `AGENDADO`/`EXECUTADO`), ou quando a manobra já está no histórico. Linhas **brancas** (`FUTURO`) e **lilases** (`BREVE`) ainda podem mudar, inclusive quando o navio atrasa.
+2. **Registro** (`gerar_2026.py`, logo depois de rodar o motor). Para cada manobra azul/vermelha da saída do motor que ainda não esteja no arquivo e cujo prático seja regular (nunca JA/SI/CH), grava uma linha em `dados/escalacao_finalizada.csv` (`DT` início, `Vessel`, `Pratico`, `registrado_em`). Navio de 2 práticos grava uma linha por prático. Linha gravada nunca é alterada.
+3. **Uso** (`gerar_2026.py` + motor). A cada rodada o arquivo vira o dicionário `{(dd/mm/aaaa, hh:mm, navio): [práticos]}` em `motor_e2d/_congeladas.pkl`, passado ao motor pela variável de ambiente `FROZEN` (`motor_e2d.py` guarda em `sim._FROZEN_KEY`). Em `ep_sim_v3_corrigido.simular_turno`, no início do processamento de cada manobra (antes da regra da draga, dos especiais forçados e do ESCOLHER), se existe prático congelado para a chave que ainda não foi usado por outra linha do mesmo horário, **ele é o prático da manobra**. Não se testa disponibilidade, Z5 nem posição na fila, porque a manobra já aconteceu. O resto do processamento (A/B, fila depois da B, contagem de Z5, exibição) segue igual. **Exceção:** se a manobra é de especial pelo mapa da E12 (`_ESP_ATRIB_FORCADAS_KEY`), o congelamento é ignorado e vale o especial, porque os especiais ficam sempre como na E12 (caso: GOLDEN THETIS, 29/10/2026 10:30).
+
+Pontos de atenção:
+- Histórico da regra: de 28/10/2026 11:40 a 29/10/2026 o protótipo congelava 1 h antes da manobra, e o primeiro congelamento prendeu todo o passado, que tinha sido simulado com a troca direta. Em 29/10/2026 esse congelamento foi **descartado** (decisão da Praticagem: não se congela o que foi gerado errado). O painel foi refeito do zero com as regras corretas e, a partir daí, vale a regra da linha azul/vermelha. `dados/escalacao_congelada.csv` fica guardado, sem uso.
+- Em produção, quem grava é o sistema, no momento em que a manobra começa (banco de dados), e não este arquivo.
+- Sem o arquivo, ou sem `FROZEN`, o motor se comporta exatamente como antes: o conjunto de teste (`testes/`) não usa congelamento e continua 100% igual. A regra é testada por `testes/testar_congelamento.py` (inclusive a exceção dos especiais, teste 3).
+
+**Manobras já iniciadas e ainda fora do histórico ("órfãs").** O histórico raspado (`historico_2026.csv`) vale até a última manobra raspada, e a pauta atual (`pauta_rt.csv`) só entrava depois disso. Uma manobra já iniciada que ainda estava só na pauta atual ficava de fora do painel até a raspagem seguinte do histórico. Hoje (`gerar_2026.py`, bloco 1) ela é mantida, desde que: (a) o início seja anterior ao corte (última manobra do histórico + 1 min); (b) o status na pauta não seja `FUTURO`; (c) não exista no histórico manobra do mesmo navio com os mesmos `De`/`Para` dentro de ±6 h (evita duplicar). A linha entra pela pauta atual e a rodada registra "[pauta] N manobra(s) já feitas ainda fora do histórico: mantidas pela pauta atual".
 
 ---
 
@@ -743,6 +756,8 @@ Gerada por `gerar_2026.py` (bloco 6) a partir da saída do motor:
 | Draga: manobras do navio em ±36 h | ≥ 4 (horários distintos) | `ep_sim_v3_corrigido.py`, bloco DRAGA | 5.13 |
 | Draga: tolerância após o fim previsto da 1ª | 30 min | idem | 5.13 |
 | T do giro sem atracar | linhas `GIRO …` da tabela T | `gerar_2026.py` → `BTP_OV` | 5.14 |
+| Escalação congelada a partir de | linha azul (começou) ou vermelha (terminou) | `gerar_2026.py` (grava), `FROZEN` (motor lê) | 5.16 |
+| Órfã: tolerância de duplicidade no histórico | ±6 h (mesmo navio, De e Para) | `gerar_2026.py`, bloco 1 | 5.16 |
 
 ### 7.2 Parâmetros presentes no código, mas desligados ou sem efeito em produção
 
@@ -755,7 +770,7 @@ Gerada por `gerar_2026.py` (bloco 6) a partir da saída do motor:
 | `DISP_PROX=1` | Exibição avaliada pela próxima manobra. Não usar. |
 | `VIRADA_DUMP` | Grava em arquivo a escalação de cada virada. Diagnóstico. |
 | `SEM_FORCA=1` | Ignora o mapa de especiais e volta ao rodízio interno. Não usar. |
-| `REORD=direto/slot` | Modos alternativos de nova escalação. Não usar. |
+| `REORD=direto/slot` | Modos alternativos de nova escalação (troca direta, 5.6; ou sem reordenar). Não usar. |
 | `BUFFER = 15` (`ep_sim_v3_corrigido`) | Só usado pela `avail_time_fn` original, que é **substituída** por `_avail_b45`. Sem efeito. |
 | `ep_algoritmo.BUFFER = 30`, `THRESHOLD = 3.0`, `PTS_TABLE`, `simular_ep`, `BASE_DT`, `CICLO_H`, `grp_turno` | Legado da EP por pontos. Não usado pelo motor E2D. |
 | `ATALAIA = 12` | Definido, **não usado** em lugar nenhum. |
@@ -856,7 +871,7 @@ Ver Apêndice A (valores atuais do arquivo `Tempo_T__2025_.xlsx`).
 | P25 | Um turno sem manobras devolve `ultima_esc` vazio. O turno seguinte começa então pela ordem dos slots do D1 (não aplica `nova_escalacao`). | `simular_turno`, laço de turnos | Reproduzir. |
 | P26 | Manobra cujo **mesmo navio aparece 2 vezes no mesmo minuto** é sempre tratada como 2 práticos. A chave de forçamento não usa De/Para. | `carregar_pauta`, forçamento | Garantir que a pauta não tenha duplicatas espúrias. |
 | P27 | Quando o fallback não acha nenhum regular livre de atribuição no minuto, usa `fila_display[0]`, que pode ser especial ou alguém já atribuído. Extremamente improvável. | `ESCOLHER` | Tratar como erro na reimplementação. |
-| P28 | O motor é recalculado do zero a cada execução. Mudanças no passado (escala corrigida, pauta) propagam para frente. **[Inferência]** | arquitetura | Definir com a operação se a produção "congela" o passado. |
+| P28 | O motor é recalculado do zero a cada execução. Mudanças no passado (escala corrigida, pauta) propagam para frente. **[Inferência]** Desde 29/10/2026 a manobra que começou ou terminou (linha azul/vermelha) fica fixa (5.16); o restante continua sendo recalculado. | arquitetura | Em produção, gravar a escalação no momento em que ela acontece. |
 
 Validações feitas na execução de 01/01 a 20/10/2026 (cópia isolada, sem alterar arquivos): 11.249 manobras; status A 5.417, B 5.409, especiais 423; nenhum regular com 2 manobras de mesmo status em sequência (alternância A/B perfeita); nenhum regular com mais de 1 Z5 por dia operacional; 6 fallbacks.
 
@@ -897,7 +912,9 @@ Validações feitas na execução de 01/01 a 20/10/2026 (cópia isolada, sem alt
 | Simulação E12 dos especiais | `gerar_2026.py` | bloco 4 (`fim_de`, laço por `dop`) |
 | Chamada do motor e planilha final | `gerar_2026.py` | blocos 5 e 6 |
 | Draga (mesmo prático em manobras em sequência) | `ep_sim_v3_corrigido.py` | bloco DRAGA (`_draga_par`, `_draga_reserva`), `is_avail`, prefixo da escolha |
-| Giro sem atracar | `gerar_2026.py` | bloco "Giro sem atracar" (`_GIRO_T`) |
+| Giro sem atracar | `gerar_2026.py`; `ep_atualizar.py` | bloco "Giro sem atracar" (`_GIRO_T`); `_gT_m` (painel) |
+| Escalação congelada | `gerar_2026.py`; `motor_e2d.py`; `ep_sim_v3_corrigido.py` | gravação (`CONG`, `escalacao_finalizada.csv`, `STATUS_FIXO`) e `_congeladas.pkl`; `sim._FROZEN_KEY`; bloco `_fz` no laço "PROCESSAR MANOBRAS" |
+| Manobras já iniciadas fora do histórico (órfãs) | `gerar_2026.py` | bloco 1 (`_orf`) |
 | Escala real (imagem do SPPILOTS) | `escala_grafica.py`; `gerar_2026.py` | `atualizar`; bloco `_EG` |
 
 ---
@@ -1196,10 +1213,3 @@ Berço ausente desta tabela (inclusive os não cadastrados em `BERCO_ZONE`) → 
 | `VAL` | `VAL` | 45 |
 
 Par (De, Para) ausente → `TM_ZONA` do par de zonas (8.3) → 60.
-
-### 5.16 Escalação congelada (28/10/2026)
-- A partir de 1 h antes do início da manobra, o prático regular escalado fica **fixo**: as simulações seguintes não o alteram. Uma linha vermelha (iniciada) nunca muda de prático.
-- Especiais (JA, SI, CH) não são congelados.
-- Registro: `escalacao_congelada.csv` (DT, Vessel, Pratico, registrado_em). Cada rodada acrescenta as manobras que passaram a 1 h do início.
-- Manobra iniciada que desapareceu da pauta continua exibida (órfã).
-- Limitação: o congelamento anterior a 28/10 11:40 foi reconstruído da simulação então vigente, não do que estava na tela.

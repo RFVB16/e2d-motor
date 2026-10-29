@@ -22,7 +22,7 @@ Este pacote reúne o que uma equipe de TI precisa para implementar a E2D em prod
 |---|---|
 | `codigo_referencia/` | Código do protótipo atual (Python). É a **referência oficial** das regras: em caso de dúvida entre um texto e o código, vale o código. Mesma estrutura de pastas do protótipo em uso. |
 | `codigo_referencia/motor_e2d/` | Motor da E2D (simulação da fila) |
-| `testes/` | Conjunto de teste com entrada e resultado esperado (01/01 a 13/11/2026, 11.320 manobras; esperado regerado em 28/10/2026 com a regra da draga) e os scripts `rodar_referencia.py` e `comparar.py` |
+| `testes/` | Conjunto de teste com entrada e resultado esperado (01/01 a 13/11/2026, 11.320 manobras; esperado regerado em 29/10/2026 com a nova escalação indireta, o modelo original; o esperado da troca direta fica em `esperado_alternativo/`) e os scripts `rodar_referencia.py`, `comparar.py` e `testar_congelamento.py` (teste da escalação congelada, 02 5.16) |
 | `dados/` | Dados reais de 2026 para estudo: pauta consolidada com início/fim reais e histórico do SPPILOTS com o prático de cada manobra |
 
 ## Teste rápido (5 minutos)

@@ -19,12 +19,14 @@ Uma linha por manobra (navio de 2 práticos em uma linha, práticos separados po
 | Navio | nome |
 | Local | `E 39` (entrada), `S 39` (saída), `M 34 → 35.2` (mudança) |
 | Horário | dd/mm hh:mm; se a manobra não é confirmada e o prático escalado só fica livre depois, mostra abaixo "⚠ livre hh:mm" (horário previsto inviável) |
-| PRT | prático(s) escalado(s) pela E2D; especiais destacados; **símbolo ⚠ de observação** (6.5) |
-| A/B | status no ciclo |
-| Δt | em **todas** as linhas: tempo entre o **início** da manobra anterior do mesmo prático e o início desta (na B: início da A → início da B; na A: início da B anterior → início da A); em branco se a anterior foi em outro turno, em especiais e em manobras não confirmadas; em navio de 2 práticos, "ON 3h00 / BR 1h30" |
+| PRT | prático(s) escalado(s) pela E2D; especiais destacados; **⚠ de observação** (6.5) |
+| A/B | status no ciclo; em navio de 2 práticos mostra os dois, na ordem dos práticos (A/B, B/A, e também A/A e B/B) |
+| Δt | em **todas** as linhas: tempo entre o **início** da manobra anterior do mesmo prático e o início desta (na B: início da A → início da B; na A: início da B anterior → início da A); em branco se a anterior foi em outro turno, em especiais e em manobras não confirmadas; em navio de 2 práticos, "ON 3h00 / BR 1h30". **Na A** (o Δt da A é o descanso longo) o valor aparece em **negrito amarelo com contorno preto** (como o ⚠); em navio de 2 práticos, só a parte de quem está em A |
 | Escalação | fila logo após a manobra (`XX(hh:mm)` = indisponível até hh:mm). **Oculta por padrão**; botão "Mostrar/Ocultar escalação" no título (escolha salva no navegador) |
 
-Cor da linha pelo status do SPPILOTS: executada (rosa), confirmada/próxima (azul), em breve (lilás), não confirmada (branca).
+Cor da linha pelo status do SPPILOTS: executada (rosa), confirmada/próxima (azul), em breve (lilás), não confirmada (branca). **Especial já escalado em manobra não confirmada:** linha cinza com texto branco, como no SPPILOTS.
+
+Quando a manobra **começa** (linha azul) ou **termina** (linha vermelha), o nome do prático fica **congelado** e não muda mais (02, 5.16). Linhas brancas e lilases ainda podem mudar. Manobras já iniciadas que ainda não estão no histórico continuam aparecendo (02, 5.16).
 
 ## 6.3 Coluna lateral
 - **Z5 hoje**: manobras Z5 do dia operacional e quem fez.
@@ -35,20 +37,14 @@ Cor da linha pelo status do SPPILOTS: executada (rosa), confirmada/próxima (azu
 Tabela por semana: período, manobras (média/dia), Δt médio efetivo, posições médias após B.
 
 ## 6.5 Definições dos cálculos
-- **Fim efetivo de uma manobra** = início (horário da pauta) + T de tabela + lancha até a Atalaia. Lancha até a Atalaia: 12 min se termina em FB; se termina num berço, lancha de FB até o berço menos 12 (Z2 8, Z3 13, Z4 18, Z5 28 min).
+- **Fim efetivo de uma manobra** = início (horário da pauta) + T de tabela (giro sem atracar: T da linha `GIRO …`, 02 5.14) + lancha até a Atalaia. Lancha até a Atalaia: 12 min se termina em FB; se termina num berço, lancha de FB até o berço menos 12 (Z2 8, Z3 13, Z4 18, Z5 28 min).
 - **DL efetivo** = início da A − fim efetivo da B anterior do mesmo prático, se não houve folga entre elas (o prático esteve escalado em todos os dias operacionais entre as duas).
 - **Disponibilidade** (igual ao motor) = arredonda ao quarto de hora mais próximo (início da última manobra + T + margem + lancha do destino dela até a origem da próxima); margem 45 min se a próxima é entrada (sai de FB), 25 min nas demais.
 - **Posições após B**: quantas manobras ocorrem entre a B de um prático e a A seguinte dele.
-- **Símbolo ⚠ de observação (PRT; toque ou passe o mouse para ver o motivo: "Risco de atraso" ou "Escalado ainda a bordo")**: só em manobras confirmadas, a partir da escalação (1 h antes) e nos últimos 2 dias. *Apertada* = fim previsto da A (início + T) + lancha a menos de 15 min do início da B (risco de atraso). *Dentro do T* = na escalação da B (início − 60 min) o prático ainda tinha mais de 30 min de A pelo T (risco de manipulação). Registro em `dados/observacao_log.csv`.
+- **⚠ de observação (PRT)**: só em manobras confirmadas, a partir da escalação (1 h antes) e nos últimos 2 dias. Passando o mouse (ou tocando) no ⚠ aparece o motivo: **"Risco de atraso (XX)"** = fim previsto da A (início + T) + lancha a menos de 15 min do início da B; **"Escalado ainda a bordo (XX)"** = na escalação da B (início − 60 min) o prático ainda tinha mais de 30 min de A pelo T (risco de manipulação). Registro em `dados/observacao_log.csv`.
 
 ## 6.6 Requisitos não funcionais
 - Atualização a cada 1–5 min (protótipo: 15 min).
 - Funciona em celular.
 - Acesso com login (práticos e administração).
 - Indicação clara de dados desatualizados ou com falha de coleta.
-
-## Relatório por prático (28/10/2026)
-- Clicar no nome do prático (ou na célula A/B) abre uma janela com a comparação E12 real × E2D no turno do prático (48 h, ou o dia, em meio turno).
-- Descanso útil: do fim da manobra (início + T de tabela + lancha até a Atalaia) até 1 h antes do início da seguinte; inclui do início do serviço (07:30) até o acionamento da 1ª e da última até o fim do serviço. Mesmo critério nas duas escalas.
-- Resumo: manobras, maior descanso útil, total, trabalho na madrugada (0h–5h). Só E2D: descanso longo (B → A) e intervalos entre A e B.
-- A comparação vai até o horário em que a E12 já tem nome no SPPILOTS; depois disso, manobras da E2D aparecem em cinza e não entram na conta.

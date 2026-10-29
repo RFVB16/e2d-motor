@@ -1245,7 +1245,7 @@ COR_TEXT = {
 
 
 def _dt_html(cal, ab):
-    """Coluna Δt: o Δt da manobra A é o descanso longo -> negrito verde (pedido do Rodrigo, 29/10/2026).
+    """Coluna Δt: o Δt da manobra A é o descanso longo -> negrito amarelo com contorno preto (pedido do Rodrigo, 29/10/2026).
     Navio de 2 práticos ('ON 3h00 / BR 1h30' com A/B 'A/B'): destaca só a parte de quem está em A."""
     import html as _h
     cal = str(cal or ''); ab = str(ab or '').upper()
@@ -2104,7 +2104,7 @@ body {{ font-family: "Segoe UI", Arial, sans-serif; font-size: 12px; background:
 .obsx-txt {{ display: none; position: absolute; left: 0; top: 1.4em; z-index: 20; width: 240px; white-space: normal;
   background: #ffffe0; color: #000; border: 1px solid #000; padding: 4px 6px; font-weight: 400; font-size: 11px; text-align: left; }}
 .obsx.open .obsx-txt {{ display: block; }}
-.dl-a {{ color: #006100; font-weight: 800; }}
+.dl-a {{ color: #ffd400; font-weight: 800; text-shadow: 0 0 1px #000, 0 0 1px #000, 0 0 1px #000; }}
 .ep {{ font-weight: 700; font-size: 14px; color: #1B4F72; letter-spacing: .5px; white-space: nowrap; }}
 .cal, .brd {{ font-size: 10.5px; color: #666; white-space: nowrap; }}
 .esc {{ font-size: 11px; font-family: "Consolas","Courier New",monospace; color: #333;
