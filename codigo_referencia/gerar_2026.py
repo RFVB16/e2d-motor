@@ -416,7 +416,7 @@ try:
     if len(_canc):
         _cpr = defaultdict(list)
         for _row in openpyxl.load_workbook(MOTOR / OUT_M, read_only=True).worksheets[0].iter_rows(min_row=2, values_only=True):
-            if isinstance(_row[0], int) and str(_row[8] or '') == 'C':
+            if isinstance(_row[0], int) and str(_row[8] or '').startswith('C'):
                 _cpr[(pd.to_datetime(f'{_row[1]} {_row[2]}', dayfirst=True), str(_row[5]).strip())].append(str(_row[4]).strip())
         for _i in _canc.index:
             if not str(_canc.at[_i, 'Pratico']).strip():
@@ -437,14 +437,17 @@ SAIDA.parent.mkdir(parents=True, exist_ok=True)
 wb = xlsxwriter.Workbook(str(SAIDA)); ws = wb.add_worksheet('E2D 2026')
 ws.write(0, 0, f'E2D 2026 — margem {MARGEM_ENTRADA} min antes de entrada / {MARGEM_OUTRAS} min antes de saída e mudança — gerado {dt.datetime.now():%d/%m/%Y %H:%M}')
 ws.write_row(1, 0, ['Seq', 'Data', 'Hora', 'Termino', 'Pratico', 'Navio', 'De', 'Para', 'Pts(cont)', 'Pts(real)', 'Total', 'Status', '#Pos', 'Escalacao'])
-ri = 2; n = 0
+ri = 2; n = 0; _cpain = []
 for row in src.iter_rows(min_row=2, values_only=True):
     if not isinstance(row[0], int):
         continue
     seq, data, hora, term, prat, nav, de, para, st, esc = row[:10]
-    if st == 'C':        # manobra cancelada: não aparece no painel (o efeito fica na fila)
+    if str(st or '').startswith('C'):   # cancelada: fora da planilha; o painel a mostra em verde (canceladas_painel.csv)
+        _cpain.append({'DT': pd.to_datetime(f'{data} {hora}', dayfirst=True).strftime('%Y-%m-%d %H:%M'), 'Vessel': str(nav).strip(),
+                       'Pratico': str(prat).strip(), 'AB': str(st)[1:]})   # AB = o que ela seria (A ou B)
         continue
     ws.write_row(ri, 0, [seq, data, hora, term or '', prat, nav, de, para, '', '', '', st or '', '', esc or ''])
     ri += 1; n += 1
 wb.close()
+pd.DataFrame(_cpain, columns=['DT', 'Vessel', 'Pratico', 'AB']).to_csv(SAIDA.parent / 'canceladas_painel.csv', index=False, encoding='utf-8')
 print(f'[ok] {SAIDA} — {n} manobras — {time.time()-t0:.0f}s')

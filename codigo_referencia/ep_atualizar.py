@@ -1851,26 +1851,26 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
             juntadas.append((m, is_past))
 
     # Manobra cancelada depois da escalação (linha verde no SPPilots): aparece em verde, com o prático que
-    # estava escalado; não conta como manobra (sem A/B e sem Δt) e o prático vai para a frente da fila (PACOTE 5.17)
+    # estava escalado; não conta como manobra (sem Δt; A/B mostra o que ela seria) e o prático vai para a frente da fila (PACOTE 5.17)
     try:
         if juntadas:
             _t0 = min(pd.Timestamp(x['datetime']) for x, _ in juntadas); _t1 = max(pd.Timestamp(x['datetime']) for x, _ in juntadas)
             _rtc = pd.read_csv(PAUTA_RT, dtype=str)
             _rtc = _rtc[_rtc['Status'].astype(str).str.strip().str.upper() == 'CANCELADA'] if 'Status' in _rtc.columns else _rtc.iloc[0:0]
             _cpr = {}
-            _cf = _DIR / 'dados' / 'manobras_canceladas.csv'
+            _cf = _DIR / 'ao_vivo' / 'canceladas_painel.csv'   # gerado pelo gerar_2026.py: prático e o que seria (A/B)
             if _cf.exists():
                 for _r in pd.read_csv(_cf, dtype=str).fillna('').itertuples():
-                    _cpr.setdefault((pd.Timestamp(_r.DT).floor('min'), str(_r.Vessel).strip()), []).append(str(_r.Pratico).strip())
+                    _cpr.setdefault((pd.Timestamp(_r.DT).floor('min'), str(_r.Vessel).strip()), []).append((str(_r.Pratico).strip(), str(_r.AB).strip()))
             _vc = set()
             for _r in _rtc.itertuples():
                 _d = pd.Timestamp(_r.datetime).floor('min'); _v = str(_r.Vessel).strip()
                 if (_d, _v) in _vc or not (_t0 <= _d <= _t1):
                     continue
                 _vc.add((_d, _v))
-                _pp = [x for x in _cpr.get((_d, _v), []) if x]
+                _pp = [x for x in _cpr.get((_d, _v), []) if x[0]]
                 juntadas.append(({'datetime': _d, 'vessel': _v, 'de': str(_r.From).strip(), 'para': str(_r.To).strip(),
-                                  'pratico': '/'.join(_pp), 'ab': 'C', 'status': 'CANCELADA', 'cancelada': True,
+                                  'pratico': '/'.join(x[0] for x in _pp), 'ab': '/'.join(x[1] for x in _pp), 'status': 'CANCELADA', 'cancelada': True,
                                   'calado': '', 'bordo': '', 'proxima': '', 'escalacao': ''}, False))
             juntadas.sort(key=lambda x: pd.Timestamp(x[0]['datetime']))
     except Exception as _e:

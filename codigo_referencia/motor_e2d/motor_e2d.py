@@ -420,7 +420,7 @@ for h in final_hist:
     ws.write(ri, 5, str(h.get('vessel','')), f)
     ws.write(ri, 6, str(h.get('de','')), f)
     ws.write(ri, 7, str(h.get('para','')), f)
-    ws.write(ri, 8, 'C' if h.get('cancelada') else ('B' if is_v else ('A' if is_A else '')), f)
+    ws.write(ri, 8, ('CB' if round(h.get('pts_apos', 0), 1) == 1.0 else 'CA') if h.get('cancelada') else ('B' if is_v else ('A' if is_A else '')), f)
     ws.write_string(ri, 9, str(h.get('escalacao_disp', '')), f)
     ri += 1
 
