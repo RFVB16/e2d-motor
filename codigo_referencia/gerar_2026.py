@@ -108,7 +108,9 @@ if not h.empty:
         print('[AVISO] pauta_rt.csv sem manobras futuras: clique no favorito "EP Salvar Pauta" com o ep_server.py aberto')
     # manobras já passadas que estão na pauta atual mas ainda não entraram no histórico raspado
     # (antes ficavam de fora até a próxima raspagem): entram pela pauta atual
-    _orf = rt[(rt.DT < corte) & (rt['Status'].astype(str).str.upper() != 'FUTURO')] if not rt.empty and 'Status' in rt else rt.iloc[0:0]
+    # inclui as brancas (FUTURO) atrasadas: continuam na pauta com prático escalado (ex.: KACEY 29/10 11:30, SI);
+    # sem elas a vez da E12 não andava e o especial era previsto na manobra seguinte (29/10/2026)
+    _orf = rt[rt.DT < corte] if not rt.empty else rt.iloc[0:0]
     if len(_orf):
         _hk = {}
         for _r in h.itertuples():
@@ -118,7 +120,7 @@ if not h.empty:
                for _r in _orf.itertuples()]
         _orf = _orf[_ok]
         if len(_orf):
-            print(f'[pauta] {len(_orf)} manobra(s) já feitas ainda fora do histórico: mantidas pela pauta atual')
+            print(f'[pauta] {len(_orf)} manobra(s) já passadas (ou atrasadas) ainda fora do histórico: mantidas pela pauta atual')
     partes = [h[h.DT < corte]] + ([_orf] if len(_orf) else []) + ([rt[rt.DT >= corte]] if not rt.empty else [])
     p = pd.concat(partes, ignore_index=True)
     p['De'] = p['From']; p['Para'] = p['To']
