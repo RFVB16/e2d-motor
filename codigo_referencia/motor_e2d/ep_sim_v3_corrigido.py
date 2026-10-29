@@ -590,9 +590,14 @@ def simular_turno(turno, fila_ini, man_df, T_min, T_mud, pares2,
 
             # ESCALAÇÃO CONGELADA: a partir de 1 h antes da manobra o prático escalado não muda mais
             # (gravado pelo gerar_2026.py em dados/escalacao_congelada.csv; só regulares)
-            _fz = [c for c in globals().get('_FROZEN_KEY', {}).get(
-                       (str(man['Data']), str(man['Hora']), str(man['Vessel']).strip()), [])
-                   if c not in set(atrib.values())]
+            # Manobra de especial (mapa da E12) NUNCA é congelada: os especiais ficam sempre como na E12
+            # (correção de 29/10/2026: GOLDEN THETIS 29/10 10:30 foi congelada com AG antes de o JA entrar na pauta).
+            _kfz = (str(man['Data']), str(man['Hora']), str(man['Vessel']).strip())
+            _esp_k = globals().get('_ESP_ATRIB_FORCADAS_KEY', {}).get(_kfz, [])
+            if isinstance(_esp_k, str):
+                _esp_k = [_esp_k]
+            _fz = [] if any(c in ESPECIAIS for c in _esp_k) else \
+                  [c for c in globals().get('_FROZEN_KEY', {}).get(_kfz, []) if c not in set(atrib.values())]
             _p_draga = _draga_prat.get(_draga_par[k]) if k in _draga_par else None
             if _fz and k not in atrib:
                 atrib[k] = _fz[0]
