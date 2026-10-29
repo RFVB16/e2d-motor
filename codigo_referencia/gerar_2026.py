@@ -311,9 +311,27 @@ for i in range(len(p)):
 wb.close()
 
 # ── 5. Motor E2D ────────────────────────────────────────────────────────────────
-# Escalação congelada: a partir de 1 h antes da manobra (hora da escalação real) o prático
-# escalado pela E2D fica fixo, mesmo que a pauta anterior mude depois. Só regulares.
-CONG = DIR / 'dados' / 'escalacao_congelada.csv'
+# Escalação congelada (regra de 29/10/2026): manobra que já COMEÇOU (linha azul na pauta do SPPilots:
+# PROXIMO/CONFIRMADO) ou TERMINOU (linha vermelha: AGENDADO/EXECUTADO, ou já no histórico) não muda mais.
+# O prático que a E2D tinha nessa hora fica fixo. Linhas brancas e lilases ainda podem mudar (inclusive com atraso).
+# Só regulares; manobra de especial nunca é congelada (o motor ignora, ep_sim_v3_corrigido).
+STATUS_FIXO = {'PROXIMO', 'CONFIRMADO', 'AGENDADO', 'EXECUTADO'}
+_mn = lambda t: pd.Timestamp(t).floor('min')
+_fixas = set()
+if not h.empty:
+    _fixas |= {(_mn(t), str(v).strip()) for t, v in zip(h.DT, h.Vessel)}
+if not rt.empty and 'Status' in rt:
+    _fixas |= {(_mn(t), str(v).strip()) for t, v, s_ in zip(rt.DT, rt.Vessel, rt.Status)
+               if str(s_).strip().upper() in STATUS_FIXO}
+CONG = DIR / 'dados' / 'escalacao_finalizada.csv'
+CONG_ANT = DIR / 'dados' / 'escalacao_congelada.csv'   # regra anterior (1 h antes), 28-29/10/2026: só histórico
+if not CONG.exists() and CONG_ANT.exists():
+    # primeira rodada com a regra nova: do arquivo antigo fica só o que já começou/terminou (é passado)
+    _old = pd.read_csv(CONG_ANT, dtype=str)
+    _keep = _old[[(_mn(a), str(b).strip()) in _fixas for a, b in zip(_old.DT, _old.Vessel)]]
+    CONG.parent.mkdir(parents=True, exist_ok=True)
+    _keep.to_csv(CONG, index=False, encoding='utf-8')
+    print(f'[congela] regra nova (linha azul/vermelha): {len(_keep)} de {len(_old)} registros antigos mantidos')
 _cg = pd.read_csv(CONG, dtype=str) if CONG.exists() else pd.DataFrame(columns=['DT', 'Vessel', 'Pratico', 'registrado_em'])
 _fz = defaultdict(list)
 for _r in _cg.itertuples():
@@ -330,17 +348,17 @@ if r.returncode != 0:
     print(r.stdout[-1500:]); print(r.stderr[-3000:]); sys.exit(1)
 print('[motor]', ' | '.join(l for l in r.stdout.splitlines() if 'Etapa' in l or 'Especiais' in l or 'Fallback' in l or 'congeladas' in l))
 
-# grava as escalações que chegaram à hora da escalação (1 h antes) e ainda não estavam congeladas
+# grava as manobras que já começaram ou terminaram (azul/vermelha) e ainda não estavam congeladas
 try:
     _agora = pd.Timestamp(dt.datetime.now())
-    _ja = {(pd.Timestamp(a), str(b).strip()) for a, b in zip(_cg.DT, _cg.Vessel)}
+    _ja = {(_mn(a), str(b).strip()) for a, b in zip(_cg.DT, _cg.Vessel)}
     _novos = defaultdict(list)
     for _row in openpyxl.load_workbook(MOTOR / OUT_M, read_only=True).worksheets[0].iter_rows(min_row=2, values_only=True):
         if not isinstance(_row[0], int):
             continue
         _d = pd.to_datetime(f'{_row[1]} {_row[2]}', dayfirst=True)
         _pr, _nv = str(_row[4] or '').strip(), str(_row[5] or '').strip()
-        if _d - pd.Timedelta(hours=1) <= _agora and (_d, _nv) not in _ja and _pr and _pr not in ESP:
+        if (_mn(_d), _nv) in _fixas and (_mn(_d), _nv) not in _ja and _pr and _pr not in ESP:
             _novos[(_d, _nv)].append(_pr)
     if _novos:
         _add = pd.DataFrame([{'DT': k[0].strftime('%Y-%m-%d %H:%M'), 'Vessel': k[1], 'Pratico': p_,
@@ -348,7 +366,7 @@ try:
                              for k, v in _novos.items() for p_ in v])
         CONG.parent.mkdir(parents=True, exist_ok=True)
         pd.concat([_cg, _add], ignore_index=True).to_csv(CONG, index=False, encoding='utf-8')
-        print(f'[congela] {len(_novos)} manobra(s) com escalação congelada agora')
+        print(f'[congela] {len(_novos)} manobra(s) começada(s)/terminada(s) agora: prático fixo')
 except Exception as _e:
     print(f'[congela] não gravado: {_e}')
 
