@@ -708,9 +708,30 @@ def marcar_observacao(manobras):
 _DL_TEMPOS = []   # horário da B de cada valor de deltas_min_dia (para a semana atual)
 
 # ── Montar dados do painel ────────────────────────────────────────────────────
+_CANC_INI = {}   # prático -> inícios das manobras canceladas depois da escalação
+_CANC_LIN = {}   # (início, navio) -> [(prático, A/B que seria)]
+_CANC_DT = {}    # (início, navio) -> Δt da linha verde
+
+
+def _ler_canceladas():
+    """ao_vivo/canceladas_painel.csv (gerado pelo gerar_2026.py): prático e o que a cancelada seria (A/B)."""
+    _CANC_INI.clear(); _CANC_LIN.clear()
+    try:
+        f = _DIR / 'ao_vivo' / 'canceladas_painel.csv'
+        if f.exists():
+            for r in pd.read_csv(f, dtype=str).fillna('').itertuples():
+                d = pd.Timestamp(r.DT).floor('min'); v = str(r.Vessel).strip(); p = str(r.Pratico).strip()
+                if p:
+                    _CANC_INI.setdefault(p, []).append(d)
+                    _CANC_LIN.setdefault((d, v), []).append((p, str(r.AB).strip()))
+    except Exception as e:
+        print(f'[cancelada] não lida: {e}')
+
+
 def montar_dados(manobras, rt_idx):
     """Separa manobras em: passadas (últimas 20), futuras e histórico."""
     now = pd.Timestamp(datetime.now())
+    _ler_canceladas()
 
     # Inicio do dia operacional vigente (07:30 hoje, ou 07:30 ontem se ainda < 07:30)
     if now.hour > 7 or (now.hour == 7 and now.minute >= 30):
@@ -1009,6 +1030,10 @@ def montar_dados(manobras, rt_idx):
                     ant = m2
                 else:
                     break
+            # manobra cancelada depois da escalação conta como a anterior (o descanso vai até o horário dela)
+            _ca = [t for t in _CANC_INI.get(pi, []) if t < dt]
+            if _ca and (ant is None or max(_ca) > pd.Timestamp(ant['datetime'])):
+                ant = {'datetime': max(_ca)}
             if ant is None:
                 saidas.append(''); continue
             ini_ant = pd.Timestamp(ant['datetime'])
@@ -1018,6 +1043,11 @@ def montar_dados(manobras, rt_idx):
             h_, mn_ = divmod(tot, 60)
             saidas.append(f'{h_}h{mn_:02d}' if h_ else f'{mn_}min')
         return '/'.join(x for x in saidas if x) if any(saidas) else ''
+
+    # Δt da própria linha verde (cancelada): do início da anterior do prático até o horário da cancelada
+    _CANC_DT.clear()
+    for (_cd, _cv), _cl in _CANC_LIN.items():
+        _CANC_DT[(_cd, _cv)] = '/'.join(x for x in (dt_inicios({'pratico': p_, 'datetime': _cd, 'vessel': _cv}) for p_, _ in _cl) if x)
 
     # Aplica PROX em TODAS as listas — para qualquer manobra B,
     # mostra o tempo ate a proxima manobra do mesmo pratico.
@@ -1851,17 +1881,13 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
             juntadas.append((m, is_past))
 
     # Manobra cancelada depois da escalação (linha verde no SPPilots): aparece em verde, com o prático que
-    # estava escalado; não conta como manobra (sem Δt; A/B mostra o que ela seria) e o prático vai para a frente da fila (PACOTE 5.17)
+    # estava escalado; não conta como manobra (A/B mostra o que ela seria; Δt até o horário dela, e a manobra seguinte do prático conta a partir dela) e o prático vai para a frente da fila (PACOTE 5.17)
     try:
         if juntadas:
             _t0 = min(pd.Timestamp(x['datetime']) for x, _ in juntadas); _t1 = max(pd.Timestamp(x['datetime']) for x, _ in juntadas)
             _rtc = pd.read_csv(PAUTA_RT, dtype=str)
             _rtc = _rtc[_rtc['Status'].astype(str).str.strip().str.upper() == 'CANCELADA'] if 'Status' in _rtc.columns else _rtc.iloc[0:0]
-            _cpr = {}
-            _cf = _DIR / 'ao_vivo' / 'canceladas_painel.csv'   # gerado pelo gerar_2026.py: prático e o que seria (A/B)
-            if _cf.exists():
-                for _r in pd.read_csv(_cf, dtype=str).fillna('').itertuples():
-                    _cpr.setdefault((pd.Timestamp(_r.DT).floor('min'), str(_r.Vessel).strip()), []).append((str(_r.Pratico).strip(), str(_r.AB).strip()))
+            _cpr = _CANC_LIN   # lido em montar_dados (ao_vivo/canceladas_painel.csv)
             _vc = set()
             for _r in _rtc.itertuples():
                 _d = pd.Timestamp(_r.datetime).floor('min'); _v = str(_r.Vessel).strip()
@@ -1871,7 +1897,7 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
                 _pp = [x for x in _cpr.get((_d, _v), []) if x[0]]
                 juntadas.append(({'datetime': _d, 'vessel': _v, 'de': str(_r.From).strip(), 'para': str(_r.To).strip(),
                                   'pratico': '/'.join(x[0] for x in _pp), 'ab': '/'.join(x[1] for x in _pp), 'status': 'CANCELADA', 'cancelada': True,
-                                  'calado': '', 'bordo': '', 'proxima': '', 'escalacao': ''}, False))
+                                  'calado': '', 'bordo': '', 'proxima': _CANC_DT.get((_d, _v), ''), 'escalacao': ''}, False))
             juntadas.sort(key=lambda x: pd.Timestamp(x[0]['datetime']))
     except Exception as _e:
         print(f'[cancelada] não mostrada: {_e}')
