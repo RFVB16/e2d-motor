@@ -70,6 +70,31 @@ except Exception as _e:
 
 # ── Detecção de Z5 ────────────────────────────────────────────────────────────
 Z5_BERCOS = {'COS 2', 'COS 3', 'COS 4', 'TIP-2', 'TIP-3', 'TIP-4', 'ULT'}
+# Giro sem atracar (FB -> FB): o gT() da tabela devolve 60 min para qualquer FB->FB. O T certo (linhas GIRO da
+# tabela de T) o gerar_2026.py grava em motor_e2d/_giro_T.pkl a cada rodada, por (data hora, 'FB', 'FB').
+# _gT_m() usa esse T quando a manobra e um giro conhecido; nos demais casos e igual ao gT() de sempre.
+_giro_cache = {'mt': None, 'd': {}}
+def _giro_T_dict():
+    try:
+        f = _DIR / 'motor_e2d' / '_giro_T.pkl'
+        mt = f.stat().st_mtime
+        if _giro_cache['mt'] != mt:
+            import pickle as _pk
+            _giro_cache['d'] = _pk.load(open(f, 'rb')) or {}
+            _giro_cache['mt'] = mt
+    except Exception:
+        pass
+    return _giro_cache['d']
+
+def _gT_m(de, para, dt):
+    de = str(de).strip(); para = str(para).strip()
+    if de == 'FB' and para == 'FB':
+        g = _giro_T_dict().get((pd.Timestamp(dt).strftime('%Y-%m-%d %H:%M'), 'FB', 'FB'))
+        if g is not None:
+            return g
+    return _gT(de, para, _T_min, _T_mud)
+
+
 def is_z5(de, para):
     return str(de).strip() in Z5_BERCOS or str(para).strip() in Z5_BERCOS
 
@@ -112,7 +137,7 @@ def _fim_b_efetivo(dt, de, para):
     dt = pd.Timestamp(dt)
     try:
         if _ep_algo_ok and _T_min:
-            dt = dt + pd.Timedelta(minutes=_gT(str(de), str(para), _T_min, _T_mud))
+            dt = dt + pd.Timedelta(minutes=_gT_m(de, para, dt))
     except Exception:
         pass
     return dt + pd.Timedelta(minutes=_lancha_atalaia_mod(para))
@@ -614,7 +639,7 @@ def marcar_observacao(manobras):
                     and dt >= now - pd.Timedelta(days=2)
                     and dt - pd.Timestamp(ant['datetime']) < pd.Timedelta(hours=16)):
                 try:
-                    T = _gT(str(ant.get('de', '')), str(ant.get('para', '')), _T_min, _T_mud)
+                    T = _gT_m(ant.get('de', ''), ant.get('para', ''), ant['datetime'])
                     L = _gLo(str(ant.get('para', '')).strip(), str(m.get('de', '')).strip())
                     folga = (dt - (pd.Timestamp(ant['datetime']) + pd.Timedelta(minutes=T + L))).total_seconds() / 60
                     if folga < OBS_FOLGA_MIN:
@@ -636,7 +661,7 @@ def marcar_observacao(manobras):
                     and dt >= now - pd.Timedelta(days=2)
                     and dt - pd.Timestamp(ant['datetime']) < pd.Timedelta(hours=16)):
                 try:
-                    T = _gT(str(ant.get('de', '')), str(ant.get('para', '')), _T_min, _T_mud)
+                    T = _gT_m(ant.get('de', ''), ant.get('para', ''), ant['datetime'])
                     fimA = pd.Timestamp(ant['datetime']) + pd.Timedelta(minutes=T)
                     resta = (fimA - (dt - pd.Timedelta(minutes=OBS_JANELA_MIN))).total_seconds() / 60
                     if resta > OBS_DENTRO_T_MIN:
@@ -832,7 +857,7 @@ def montar_dados(manobras, rt_idx):
         # Sempre usa Tm tabelado: fim_B = dt_ini_B + gT(de, para)
         try:
             if _ep_algo_ok and _T_min:
-                _tm = _gT(str(m.get('de', '')), str(m.get('para', '')), _T_min, _T_mud)
+                _tm = _gT_m(m.get('de', ''), m.get('para', ''), dt)
                 fim_b = dt + pd.Timedelta(minutes=_tm)
         except Exception:
             pass
@@ -934,7 +959,7 @@ def montar_dados(manobras, rt_idx):
             fim_ant = pd.Timestamp(ant['datetime'])
             try:
                 if _ep_algo_ok and _T_min:
-                    fim_ant = fim_ant + pd.Timedelta(minutes=_gT(str(ant.get('de', '')), str(ant.get('para', '')), _T_min, _T_mud))
+                    fim_ant = fim_ant + pd.Timedelta(minutes=_gT_m(ant.get('de', ''), ant.get('para', ''), ant['datetime']))
                 # + lancha até a Atalaia: saída (termina em FB) = 12 min;
                 #   entrada/mudança (termina no berço) = lancha FB→berço − 12 min
                 fim_ant = fim_ant + pd.Timedelta(minutes=_lancha_atalaia(str(ant.get('para', ''))))
@@ -1066,7 +1091,7 @@ def montar_dados(manobras, rt_idx):
             fim_b = None
             try:
                 if _ep_algo_ok and _T_min:
-                    _tm2 = _gT(str(m.get('de', '')), str(m.get('para', '')), _T_min, _T_mud)
+                    _tm2 = _gT_m(m.get('de', ''), m.get('para', ''), dt_m)
                     fim_b = dt_m + pd.Timedelta(minutes=_tm2)
             except Exception:
                 pass
@@ -1146,7 +1171,7 @@ def montar_dados(manobras, rt_idx):
             if ant is None or _saiu_do_servico(p, pd.Timestamp(ant['datetime']), dt_m):
                 continue
             fr = str(m.get('de', '')).strip()
-            _T = _gT(str(ant.get('de', '')), str(ant.get('para', '')), _T_min, _T_mud) if _T_min else 60
+            _T = _gT_m(ant.get('de', ''), ant.get('para', ''), ant['datetime']) if _T_min else 60
             livre = pd.Timestamp(_r15b(pd.Timestamp(ant['datetime']).to_pydatetime() + timedelta(
                 minutes=_T + (_mg_e if fr == 'FB' else _mg_o) + _gL3(str(ant.get('para', '')).strip(), fr))))
             if livre > dt_m:
@@ -1189,7 +1214,7 @@ def montar_dados(manobras, rt_idx):
                 ultima_esc['avail_E'] = {}; ultima_esc['avail_S'] = {}
                 ultima_esc['tipo_prox'] = 'E' if _nfr == 'FB' else 'S'
                 for pi, m in _ult_p.items():
-                    _T = _gT(str(m.get('de', '')), str(m.get('para', '')), _T_min, _T_mud) if _T_min else 60
+                    _T = _gT_m(m.get('de', ''), m.get('para', ''), m['datetime']) if _T_min else 60
                     _ini = pd.Timestamp(m['datetime']).to_pydatetime(); _to = str(m.get('para', '')).strip()
                     ultima_esc['avail'][pi] = pd.Timestamp(_r15(_ini + timedelta(minutes=_T + _marg + _gL2(_to, _nfr))))
                     ultima_esc['avail_E'][pi] = pd.Timestamp(_r15(_ini + timedelta(minutes=_T + _mE + _gL2(_to, 'FB'))))

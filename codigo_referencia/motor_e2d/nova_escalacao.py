@@ -1,21 +1,17 @@
 """
 nova_escalacao.py
 
-REGRA PADRÃO (desde 23/10/2026): TROCA DIRETA.
-  Cada sainte é substituído, na MESMA posição da fila, pelo entrante do seu slot,
-  seguindo a cadeia de slots (sainte -> remanescente que mudou de slot -> ... -> entrante).
-  Remanescentes não mudam de posição. Se a cadeia termina num especial, a posição
-  do sainte é descartada; entrante sem posição herdada vai para o fim.
-  Critério (Rodrigo): quem continua trabalhando deve ter a menor mudança no descanso.
-  A regra antiga (substituição indireta) continua disponível com REORD=indireta.
-
-Algoritmo antigo (REORD=indireta):
+REGRA PADRÃO (desde 29/10/2026; é o modelo original da apresentação e da planilha de 2025): INDIRETA.
 Para cada posição na ultima_esc (em ordem):
   1. Se permanece: inserir novos cujo q_subst == ele (antes dele), depois ele próprio
   2. Se leaver:
      a. q_entra[leaver] é novo → entra na posição do leaver
      b. q_entra[leaver] é permanece → SKIP (perm mantém própria posição)
      c. q_entra[leaver] é especial → SKIP (especiais gerenciados separado)
+
+TROCA DIRETA (testada de 23 a 29/10/2026, NÃO está em uso): cada sainte é substituído, na MESMA posição
+da fila, pelo entrante do seu slot, seguindo a cadeia de slots; remanescentes não mudam de posição.
+Disponível com REORD=direto, só para comparação.
 """
 
 def status_valido(st):
@@ -61,7 +57,7 @@ def nova_escalacao(ultima_esc_str, saindo, entrando):
     novos     = (entrando_set - saindo_set) - ESPECIAIS  # novos não-especiais
 
     esc = parse_esc(ultima_esc_str)
-    if __import__('os').environ.get('REORD', 'direto') == 'direto':
+    if __import__('os').environ.get('REORD', 'indireta') == 'direto':
         # TROCA DIRETA: fotografia da fila; cada sainte é substituído, na MESMA posição,
         # pelo entrante do seu slot (seguindo a cadeia de trocas); status mantidos.
         slot_sai = {p: i for i, p in enumerate(saindo)}
