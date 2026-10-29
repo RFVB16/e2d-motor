@@ -103,6 +103,17 @@ CONFIG_PATH = _DIR / 'config.json'
 HIST_PATH   = _DIR / 'historico_2026.csv'
 # Pauta RT: sempre usa o CSV da pasta do projeto
 PAUTA_RT = _DIR / 'pauta_rt.csv'
+
+
+def _sem_canceladas(d):
+    """Linhas CANCELADAS (verde no SPPilots, enviadas pelo userscript v1.4) só servem ao motor
+    (gerar_2026.py); o painel continua lendo a pauta como antes, sem elas."""
+    try:
+        if 'Status' in d.columns:
+            return d[d['Status'].astype(str).str.strip().str.upper() != 'CANCELADA'].copy()
+    except Exception:
+        pass
+    return d
 PAUTA_XLSX  = _DIR / 'inputs' / 'Pauta_de_Manobra_2026.xlsx'
 XLSX_OUT    = _DIR / 'ao_vivo' / 'E2D_2026_v6.xlsx'   # simulação ao vivo (refeita a cada rodada)
 PAINEL_PATH = _DIR / 'ep_painel.html'
@@ -231,7 +242,7 @@ def merge_pauta():
             df_hist['Data'].astype(str) + ' ' + df_hist['Hora'].astype(str),
             dayfirst=True)
 
-        rt = pd.read_csv(PAUTA_RT)
+        rt = _sem_canceladas(pd.read_csv(PAUTA_RT))
         rt['datetime'] = pd.to_datetime(rt['datetime'])
 
         rt_fmt = pd.DataFrame({
@@ -463,7 +474,7 @@ def montar_relatorio(manobras):
     except Exception:
         h = pd.DataFrame(columns=['dt', 'Vessel', 'From', 'To', 'Pratico', 'Status'])
     try:
-        rt = pd.read_csv(PAUTA_RT, dtype=str); rt['dt'] = pd.to_datetime(rt['datetime'])
+        rt = _sem_canceladas(pd.read_csv(PAUTA_RT, dtype=str)); rt['dt'] = pd.to_datetime(rt['datetime'])
         rt = rt[rt['dt'] > (h['dt'].max() if len(h) else pd.Timestamp(0))][['dt', 'Vessel', 'From', 'To', 'Pratico', 'Status']]
     except Exception:
         rt = h.iloc[0:0]
@@ -567,7 +578,7 @@ def info_pauta_rt():
     idx = {}
     if not PAUTA_RT.exists():
         return idx
-    rt = pd.read_csv(PAUTA_RT)
+    rt = _sem_canceladas(pd.read_csv(PAUTA_RT))
     rt['datetime'] = pd.to_datetime(rt['datetime'])
     for seq_rt, row in rt.iterrows():  # seq_rt = índice linha = ordem SPPILOTS
         key = (row['datetime'], str(row['Vessel']).strip())
@@ -1301,7 +1312,7 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
         # pauta_rt (atual + futuro) - ja vem com dois_prat correto
         if PAUTA_RT.exists():
             try:
-                d = pd.read_csv(PAUTA_RT)
+                d = _sem_canceladas(pd.read_csv(PAUTA_RT))
                 d['dt'] = pd.to_datetime(d['datetime'])
                 if 'dois_prat' not in d.columns:
                     d['dois_prat'] = 'false'

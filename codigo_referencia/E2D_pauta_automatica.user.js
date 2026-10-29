@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         E2D - Salvar Pauta Automatica
 // @namespace    e2d-santos
-// @version      1.3
+// @version      1.4
 // @description  Na pagina da pauta do SPPILOTS: salva a pauta no ep_server (porta 7373), recarrega a cada 5 min e refaz o login se a sessao cair.
 // @match        https://sts.sppilots.com.br/*
 // @grant        GM_xmlhttpRequest
@@ -31,8 +31,10 @@
 
   function extrair() {
     const rows = document.querySelectorAll('tr');
-    const CI = new Set(['#66cc66', '#ffff00']);
-    const SM = {'#ff4a4a': 'AGENDADO', '#33ccff': 'PROXIMO', '#b7b7ff': 'BREVE', '#ffffff': 'FUTURO', '#ff0099': 'ESPECIAL', '#000000': 'ESPECIAL'};
+    // amarelo (#ffff00) = manobra sem prático: ignorada. Verde (#66cc66) = CANCELADA depois da escalação:
+    // enviada (v1.4, 29/10/2026) para o painel pôr o prático escalado na frente da fila.
+    const CI = new Set(['#ffff00']);
+    const SM = {'#66cc66': 'CANCELADA', '#ff4a4a': 'AGENDADO', '#33ccff': 'PROXIMO', '#b7b7ff': 'BREVE', '#ffffff': 'FUTURO', '#ff0099': 'ESPECIAL', '#000000': 'ESPECIAL'};
     const hoje = new Date();
     const m = [];
     for (const r of rows) {

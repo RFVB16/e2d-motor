@@ -26,7 +26,7 @@ Uma linha por manobra (navio de 2 práticos em uma linha, práticos separados po
 
 Cor da linha pelo status do SPPILOTS: executada (rosa), confirmada/próxima (azul), em breve (lilás), não confirmada (branca). **Especial já escalado em manobra não confirmada:** linha cinza com texto branco, como no SPPILOTS.
 
-Quando a manobra **começa** (linha azul) ou **termina** (linha vermelha), o nome do prático fica **congelado** e não muda mais (02, 5.16). Linhas brancas e lilases ainda podem mudar. Manobras já iniciadas que ainda não estão no histórico continuam aparecendo (02, 5.16).
+Quando a manobra **começa** (linha azul) ou **termina** (linha vermelha), o nome do prático fica **congelado** e não muda mais (02, 5.16). Linhas brancas e lilases ainda podem mudar. Manobras já iniciadas que ainda não estão no histórico continuam aparecendo (02, 5.16). Manobra cancelada depois da escalação (linha verde) não aparece no painel; o prático dela vai para a frente da fila (02, 5.17).
 
 ## 6.3 Coluna lateral
 - **Z5 hoje**: manobras Z5 do dia operacional e quem fez.

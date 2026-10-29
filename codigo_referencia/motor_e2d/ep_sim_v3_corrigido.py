@@ -107,18 +107,21 @@ def simular_turno(turno, fila_ini, man_df, T_min, T_mud, pares2,
         _dd = man_t['datetime'].values
         _md = man_df[['datetime']].assign(_v=man_df['Vessel'].astype(str).str.strip())
         _links = []   # (prioridade, i, j): 0 = a 2ª começa antes do fim previsto da 1ª (prático ainda a bordo)
+        _CK = globals().get('_CANCEL_KEY', {})
+        _canc_i = lambda i: (str(man_t['Data'].iat[i]), str(man_t['Hora'].iat[i]), str(man_t['Vessel'].iat[i]).strip()) in _CK
         # navio de 2 práticos (duas linhas no mesmo horário) nunca entra como draga
         _dois = {(v, d) for v, d, n in zip(_vv, _dd, pd.Series(list(zip(_vv, _dd))).map(
             pd.Series(list(zip(_vv, _dd))).value_counts())) if n > 1}
         for _i in range(len(man_t)):
-            if (_vv[_i], _dd[_i]) in _dois:
+            if (_vv[_i], _dd[_i]) in _dois or (_CK and _canc_i(_i)):
                 continue
             # 4 ou mais MANOBRAS (horários distintos) do navio em 36 h
             _n36 = _md.loc[(_md['_v'] == _vv[_i]) & ((_md['datetime'] - _dd[_i]).abs() <= pd.Timedelta(hours=36)),
                            'datetime'].nunique()
             if _n36 < 4:
                 continue
-            _j = next((j for j in range(_i + 1, len(man_t)) if _vv[j] == _vv[_i] and _dd[j] > _dd[_i]), None)   # próxima manobra do navio
+            _j = next((j for j in range(_i + 1, len(man_t)) if _vv[j] == _vv[_i] and _dd[j] > _dd[_i]
+                       and not (_CK and _canc_i(j))), None)   # próxima manobra do navio (sem as canceladas)
             if _j is None or _ff[_j] != _tt[_i] or (_vv[_j], _dd[_j]) in _dois:
                 continue
             # em sequência = a 2ª começa até 30 min depois do fim previsto da 1ª (início + T)
@@ -138,6 +141,7 @@ def simular_turno(turno, fila_ini, man_df, T_min, T_mud, pares2,
         _draga_par = {}
     _draga_ent = set(_draga_par.values())
     _draga_reserva = {}   # prático da entrada da draga -> índice da saída que ele vai fazer
+    _nao_antes = {}       # prático de manobra cancelada -> só pode pegar manobra a partir deste horário
 
     fila         = list(fila_ini)
     fila_display = list(fila_ini)
@@ -272,6 +276,8 @@ def simular_turno(turno, fila_ini, man_df, T_min, T_mud, pares2,
 
     def is_avail(p, dt, m_fr):
         if p in _draga_reserva:      # reservado para a saída da draga que ele entrou
+            return False
+        if p in _nao_antes and dt < _nao_antes[p]:   # cancelada: as manobras já escaladas ficam com quem estava
             return False
         at = avail(p, m_fr)
         try:
@@ -692,6 +698,27 @@ def simular_turno(turno, fila_ini, man_df, T_min, T_mud, pares2,
                 _draga_reserva[prat] = next(j for j, i in _draga_par.items() if i == k)
             if k in _draga_par and _draga_reserva.get(prat) == k:
                 del _draga_reserva[prat]
+
+            # MANOBRA CANCELADA depois da escalação (linha verde no SPPilots; regra do Rodrigo, 29/10/2026):
+            # não conta como manobra (nem A nem B, nem Z5). O prático escalado vai para a FRENTE de todos e vale
+            # para a próxima manobra ainda não escalada: só pode pegar manobra que comece a partir de 1 h depois
+            # de o cancelamento ser visto (as anteriores já tinham sido escaladas). O ciclo dele não muda.
+            _cv = globals().get('_CANCEL_KEY', {}).get((str(man['Data']), str(man['Hora']), str(man['Vessel']).strip()))
+            if _cv is not None and prat not in ESPECIAIS:
+                if prat in fila_display:
+                    fila_display.remove(prat)
+                fila_display.insert(0, prat)
+                _lim = pd.Timestamp(_cv.get('visto_em') or dt) + pd.Timedelta(hours=1)
+                _nao_antes[prat] = max(_nao_antes.get(prat, _lim), _lim)
+                esc_disp = make_esc(dt, m_fr)
+                ultima_esc = esc_disp
+                historico.append({
+                    'seq': 0, 'data': man['Data'], 'hora': man['Hora'], 'termino': str(man.get('Termino', '')),
+                    'vessel': str(man['Vessel']), 'pratico': prat, 'de': m_fr, 'para': m_to,
+                    'pts_man': 0, 'pts_apos': round(pts_g.get(prat, 0.0), 2), 'laranja': None,
+                    'escalacao_disp': esc_disp, 'escalacao': esc_disp, 'cancelada': True,
+                })
+                continue
 
             # Processar manobra
             pm = 0.0; pd_ = 0.0; lar = False

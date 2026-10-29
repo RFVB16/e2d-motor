@@ -73,6 +73,33 @@ def _completar_dois_praticos(d):
         d = pd.concat([d, falta], ignore_index=True).sort_values('DT', kind='stable').reset_index(drop=True)
     return d
 h = _completar_dois_praticos(h); rt = _completar_dois_praticos(rt)
+
+# Manobras CANCELADAS depois da escalação (linha verde no SPPilots, status CANCELADA; regra de 29/10/2026):
+# saem da pauta normal e vão ao motor marcadas; o prático escalado nelas vai para a frente da fila.
+# Ficam registradas em dados/manobras_canceladas.csv (com o prático e a hora em que o cancelamento foi visto),
+# para valerem mesmo depois que a linha some da pauta do SPPilots.
+CANC = DIR / 'dados' / 'manobras_canceladas.csv'
+_canc = pd.read_csv(CANC, dtype=str).fillna('') if CANC.exists() else pd.DataFrame(columns=['DT', 'Vessel', 'From', 'To', 'Pratico', 'visto_em'])
+_canc_mudou = False
+if not rt.empty and 'Status' in rt:
+    _cm = rt['Status'].astype(str).str.strip().str.upper() == 'CANCELADA'
+    _cv_rt = rt[_cm]
+    rt = rt[~_cm].reset_index(drop=True)
+    if len(_cv_rt):
+        _agora_c = pd.Timestamp(dt.datetime.now()).floor('min').strftime('%Y-%m-%d %H:%M')
+        _kc = lambda a, b, c, d: (pd.Timestamp(a).floor('min'), str(b).strip(), str(c).strip(), str(d).strip())
+        _tem = defaultdict(int)
+        for _r in _canc.itertuples():
+            _tem[_kc(_r.DT, _r.Vessel, _r.From, _r.To)] += 1
+        _vist = defaultdict(int); _add = []
+        for _r in _cv_rt.itertuples():
+            _k = _kc(_r.DT, _r.Vessel, _r.From, _r.To); _vist[_k] += 1
+            if _vist[_k] > _tem[_k]:        # navio de 2 práticos: uma linha por prático
+                _add.append({'DT': _k[0].strftime('%Y-%m-%d %H:%M'), 'Vessel': _k[1], 'From': _k[2], 'To': _k[3],
+                             'Pratico': '', 'visto_em': _agora_c})
+        if _add:
+            _canc = pd.concat([_canc, pd.DataFrame(_add)], ignore_index=True); _canc_mudou = True
+            print(f'[cancelada] {len(_add)} manobra(s) cancelada(s) depois da escalação: prático escalado vai para a frente')
 if not h.empty:
     # histórico vale até a última manobra raspada; a pauta atual só entra depois disso
     # (se o pauta_rt.csv estiver velho, ele simplesmente não acrescenta nada)
@@ -301,13 +328,24 @@ pickle.dump(_GIRO_T, open(MOTOR / '_giro_T.pkl', 'wb'))
 
 # arquivos de entrada do motor
 PAUTA_M = MOTOR / '_pauta_live.xlsx'
-pd.DataFrame({'Data': p.DT.dt.strftime('%d/%m/%Y'), 'Hora': p.DT.dt.strftime('%H:%M'), 'Termino': p.Termino.astype(str),
-              'Vessel': p.Vessel, 'From': p.De, 'To': p.Para}).to_excel(PAUTA_M, index=False)
+# as canceladas entram na pauta do motor no seu horário (depois das demais do mesmo horário), sem especial
+_pm = pd.DataFrame({'DT': p.DT, 'Vessel': p.Vessel, 'De': p.De, 'Para': p.Para, 'Termino': p.Termino.astype(str),
+                    '_pred': [x or '' for x in pred]})
+if len(_canc):
+    _cx = pd.DataFrame({'DT': pd.to_datetime(_canc.DT), 'Vessel': _canc.Vessel.astype(str).str.strip(),
+                        'De': _canc.From.astype(str).str.strip(), 'Para': _canc.To.astype(str).str.strip(), 'Termino': '', '_pred': ''})
+    _cx = _cx[(_cx.DT >= p.DT.min()) & (_cx.DT <= p.DT.max())]
+    _pm = pd.concat([_pm, _cx], ignore_index=True).sort_values('DT', kind='stable').reset_index(drop=True)
+_CANC_KEY = {(d.strftime('%d/%m/%Y'), d.strftime('%H:%M'), str(v).strip()): {'visto_em': str(ve)}
+             for d, v, ve in zip(pd.to_datetime(_canc.DT), _canc.Vessel, _canc.visto_em)} if len(_canc) else {}
+pickle.dump(_CANC_KEY, open(MOTOR / '_canceladas.pkl', 'wb'))
+pd.DataFrame({'Data': _pm.DT.dt.strftime('%d/%m/%Y'), 'Hora': _pm.DT.dt.strftime('%H:%M'), 'Termino': _pm.Termino.astype(str),
+              'Vessel': _pm.Vessel, 'From': _pm.De, 'To': _pm.Para}).to_excel(PAUTA_M, index=False)
 ESP_F = MOTOR / '_especiais_live.xlsx'
 wb = xlsxwriter.Workbook(str(ESP_F)); ws = wb.add_worksheet()
 ws.write_row(0, 0, ['Seq', 'Navio', 'Pratico'])
-for i in range(len(p)):
-    ws.write_row(i + 1, 0, [i + 1, p.Vessel.iat[i], pred[i] or ''])
+for i in range(len(_pm)):
+    ws.write_row(i + 1, 0, [i + 1, _pm.Vessel.iat[i], _pm._pred.iat[i] or ''])
 wb.close()
 
 # ── 5. Motor E2D ────────────────────────────────────────────────────────────────
@@ -332,11 +370,17 @@ _fz = defaultdict(list)
 for _r in _cg.itertuples():
     _d = pd.Timestamp(_r.DT)
     _fz[(_d.strftime('%d/%m/%Y'), _d.strftime('%H:%M'), str(_r.Vessel).strip())].append(str(_r.Pratico).strip())
+# prático já registrado numa manobra cancelada: fica o mesmo (é quem estava escalado)
+for _r in _canc.itertuples():
+    if str(_r.Pratico).strip():
+        _d = pd.Timestamp(_r.DT)
+        _fz[(_d.strftime('%d/%m/%Y'), _d.strftime('%H:%M'), str(_r.Vessel).strip())].append(str(_r.Pratico).strip())
 pickle.dump(dict(_fz), open(MOTOR / '_congeladas.pkl', 'wb'))
 OUT_M = '_E2D_live.xlsx'
 env = dict(os.environ, PAUTA_FILE=str(PAUTA_M), ESP_FONTE=str(ESP_F), TURNOS=str(TURNOS),
            MARGEM_ENTRADA=str(MARGEM_ENTRADA), MARGEM_OUTRAS=str(MARGEM_OUTRAS), E2D_OUT=OUT_M,
-           FB_OUT=str(MOTOR / '_fallback.pkl'), PYTHONIOENCODING='utf-8', BTP_OV=str(MOTOR / '_giro_T.pkl'), FROZEN=str(MOTOR / '_congeladas.pkl'))
+           FB_OUT=str(MOTOR / '_fallback.pkl'), PYTHONIOENCODING='utf-8', BTP_OV=str(MOTOR / '_giro_T.pkl'), FROZEN=str(MOTOR / '_congeladas.pkl'),
+           CANCEL=str(MOTOR / '_canceladas.pkl'))
 r = subprocess.run([sys.executable, 'motor_e2d.py'], cwd=str(MOTOR), env=env, capture_output=True,
                    text=True, encoding='utf-8', errors='replace')
 if r.returncode != 0:
@@ -365,6 +409,26 @@ try:
 except Exception as _e:
     print(f'[congela] não gravado: {_e}')
 
+# registra o prático de cada manobra cancelada (é quem estava escalado nela)
+try:
+    if len(_canc):
+        _cpr = defaultdict(list)
+        for _row in openpyxl.load_workbook(MOTOR / OUT_M, read_only=True).worksheets[0].iter_rows(min_row=2, values_only=True):
+            if isinstance(_row[0], int) and str(_row[8] or '') == 'C':
+                _cpr[(pd.to_datetime(f'{_row[1]} {_row[2]}', dayfirst=True), str(_row[5]).strip())].append(str(_row[4]).strip())
+        for _i in _canc.index:
+            if not str(_canc.at[_i, 'Pratico']).strip():
+                _l = _cpr.get((pd.Timestamp(_canc.at[_i, 'DT']), str(_canc.at[_i, 'Vessel']).strip()), [])
+                _usados = [x for x in _canc.loc[(_canc.DT == _canc.at[_i, 'DT']) & (_canc.Vessel == _canc.at[_i, 'Vessel']), 'Pratico'] if x]
+                _l = [x for x in _l if x not in _usados]
+                if _l:
+                    _canc.at[_i, 'Pratico'] = _l[0]; _canc_mudou = True
+    if _canc_mudou:
+        CANC.parent.mkdir(parents=True, exist_ok=True)
+        _canc.to_csv(CANC, index=False, encoding='utf-8')
+except Exception as _e:
+    print(f'[cancelada] não registrado: {_e}')
+
 # ── 6. Planilha no formato que o ep_atualizar.py lê ─────────────────────────────
 src = openpyxl.load_workbook(MOTOR / OUT_M, read_only=True).worksheets[0]
 SAIDA.parent.mkdir(parents=True, exist_ok=True)
@@ -376,6 +440,8 @@ for row in src.iter_rows(min_row=2, values_only=True):
     if not isinstance(row[0], int):
         continue
     seq, data, hora, term, prat, nav, de, para, st, esc = row[:10]
+    if st == 'C':        # manobra cancelada: não aparece no painel (o efeito fica na fila)
+        continue
     ws.write_row(ri, 0, [seq, data, hora, term or '', prat, nav, de, para, '', '', '', st or '', '', esc or ''])
     ri += 1; n += 1
 wb.close()

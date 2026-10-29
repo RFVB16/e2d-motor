@@ -661,6 +661,24 @@ Pontos de atenção:
 
 **Manobras já iniciadas e ainda fora do histórico ("órfãs").** O histórico raspado (`historico_2026.csv`) vale até a última manobra raspada, e a pauta atual (`pauta_rt.csv`) só entrava depois disso. Uma manobra já iniciada que ainda estava só na pauta atual ficava de fora do painel até a raspagem seguinte do histórico. Hoje (`gerar_2026.py`, bloco 1) ela é mantida, desde que: (a) o início seja anterior ao corte (última manobra do histórico + 1 min); (b) o status na pauta não seja `FUTURO`; (c) não exista no histórico manobra do mesmo navio com os mesmos `De`/`Para` dentro de ±6 h (evita duplicar). A linha entra pela pauta atual e a rodada registra "[pauta] N manobra(s) já feitas ainda fora do histórico: mantidas pela pauta atual".
 
+### 5.17 Manobra cancelada depois da escalação (29/10/2026)
+
+Regra da Praticagem (29/10/2026). Vale só quando a manobra é cancelada **depois de já ter prático escalado**, ou seja, a menos de 1 h do início, com o bigrama já escolhido. No SPPILOTS essa linha fica **verde**. Cancelamento de linha branca ou lilás (ainda sem escalação) não tem regra especial: a manobra simplesmente sai da pauta e tudo segue normal.
+
+1. **A manobra não conta.** Não é A nem B, não conta para o limite de Z5 e não mexe no ciclo do prático. Se ele já tinha feito a A e a cancelada seria a B, a próxima manobra dele continua sendo a B.
+2. **O prático vai para a frente de todos** na fila, inclusive de quem está esperando com horário.
+3. **Vale para a próxima manobra ainda não escalada.** As manobras que começam antes de (hora em que o cancelamento foi visto + 1 h) já tinham prático escalado e ficam com quem estava; ele só pode pegar manobra que comece a partir desse horário.
+4. Especial (JA/SI/CH) não entra nesta regra: os especiais seguem sempre como na E12.
+
+Implementação no protótipo:
+- O script do navegador (v1.4) envia a linha verde com status `CANCELADA` (a amarela, sem prático, continua ignorada).
+- `gerar_2026.py` tira a linha da pauta normal e a grava em `dados/manobras_canceladas.csv` (`DT`, `Vessel`, `From`, `To`, `Pratico`, `visto_em`), uma linha por prático; `visto_em` = hora da rodada em que o cancelamento apareceu. A manobra volta à pauta do motor só como marcação, e a chave vai para o motor em `motor_e2d/_canceladas.pkl` (variável de ambiente `CANCEL`; `motor_e2d.py` guarda em `sim._CANCEL_KEY`). Quando o prático já foi registrado, ele é passado como congelado (5.16), para que a cancelada fique com quem estava escalado; senão, o motor escolhe normalmente e o prático escolhido é registrado no arquivo depois da rodada.
+- Em `ep_sim_v3_corrigido.simular_turno`, depois de escolhido o prático da cancelada: ele sai da fila e entra na posição 1; recebe `_nao_antes[prático] = visto_em + 1 h` (testado em `is_avail`); a linha vai para a saída com status `C`, e o laço segue para a próxima manobra sem contar a manobra, sem Z5 e sem A/B. A regra da draga ignora as canceladas.
+- O painel não mostra a linha cancelada.
+- Sem o arquivo, ou sem `CANCEL`, o motor se comporta exatamente como antes (o conjunto de teste continua 100%). A regra é testada por `testes/testar_cancelamento.py` (uma A e uma B canceladas).
+- Efeito esperado: depois da cancelada, todo mundo "anda uma casa" (a manobra seguinte que seria de outro passa para o prático da cancelada, e assim por diante). A previsão dos especiais para as manobras ainda não escaladas no SPPILOTS (contador da E12) também anda uma casa, como aconteceria na E12; quando o SPPILOTS escala a manobra, vale o nome real. Caso real: BOW ARCHITECT, 29/10/2026 13:30 (LC), cancelado às 12:46: o LC passa para o XING YANG HAI das 14:00 e a previsão do JA passa para o ARIES STAR das 14:00.
+- Em produção, quem registra é o sistema, no momento do cancelamento (banco de dados).
+
 ---
 
 ## 6. Saída
@@ -757,6 +775,7 @@ Gerada por `gerar_2026.py` (bloco 6) a partir da saída do motor:
 | Draga: tolerância após o fim previsto da 1ª | 30 min | idem | 5.13 |
 | T do giro sem atracar | linhas `GIRO …` da tabela T | `gerar_2026.py` → `BTP_OV` | 5.14 |
 | Escalação congelada a partir de | linha azul (começou) ou vermelha (terminou) | `gerar_2026.py` (grava), `FROZEN` (motor lê) | 5.16 |
+| Cancelada: prático só pega manobra a partir de | hora em que o cancelamento foi visto + 1 h | `ep_sim_v3_corrigido.py` (`_nao_antes`) | 5.17 |
 | Órfã: tolerância de duplicidade no histórico | ±6 h (mesmo navio, De e Para) | `gerar_2026.py`, bloco 1 | 5.16 |
 
 ### 7.2 Parâmetros presentes no código, mas desligados ou sem efeito em produção
@@ -914,6 +933,7 @@ Validações feitas na execução de 01/01 a 20/10/2026 (cópia isolada, sem alt
 | Draga (mesmo prático em manobras em sequência) | `ep_sim_v3_corrigido.py` | bloco DRAGA (`_draga_par`, `_draga_reserva`), `is_avail`, prefixo da escolha |
 | Giro sem atracar | `gerar_2026.py`; `ep_atualizar.py` | bloco "Giro sem atracar" (`_GIRO_T`); `_gT_m` (painel) |
 | Escalação congelada | `gerar_2026.py`; `motor_e2d.py`; `ep_sim_v3_corrigido.py` | gravação (`CONG`, `escalacao_finalizada.csv`, `STATUS_FIXO`) e `_congeladas.pkl`; `sim._FROZEN_KEY`; bloco `_fz` no laço "PROCESSAR MANOBRAS" |
+| Manobra cancelada depois da escalação | `gerar_2026.py`; `motor_e2d.py`; `ep_sim_v3_corrigido.py`; `E2D_pauta_automatica.user.js` | `manobras_canceladas.csv`, `_canceladas.pkl`; `sim._CANCEL_KEY`; `_nao_antes`, bloco "MANOBRA CANCELADA" antes de "# Processar manobra" |
 | Manobras já iniciadas fora do histórico (órfãs) | `gerar_2026.py` | bloco 1 (`_orf`) |
 | Escala real (imagem do SPPILOTS) | `escala_grafica.py`; `gerar_2026.py` | `atualizar`; bloco `_EG` |
 

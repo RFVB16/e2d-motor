@@ -237,6 +237,10 @@ print(f'Atribuicoes forcadas (chave): {len(esp_atrib_key)} chaves')
 _fzp = os.environ.get('FROZEN')
 sim._FROZEN_KEY = pickle.load(open(_fzp, 'rb')) if _fzp and os.path.exists(_fzp) else {}
 print(f'Escalacoes congeladas: {len(sim._FROZEN_KEY)} chaves')
+# Manobras canceladas depois da escalação (29/10/2026): {(Data, Hora, Navio): {'visto_em': 'AAAA-MM-DD HH:MM'}}
+_cnp = os.environ.get('CANCEL')
+sim._CANCEL_KEY = pickle.load(open(_cnp, 'rb')) if _cnp and os.path.exists(_cnp) else {}
+print(f'Canceladas: {len(sim._CANCEL_KEY)} chaves')
 
 
 # Carregar turnos
@@ -416,7 +420,7 @@ for h in final_hist:
     ws.write(ri, 5, str(h.get('vessel','')), f)
     ws.write(ri, 6, str(h.get('de','')), f)
     ws.write(ri, 7, str(h.get('para','')), f)
-    ws.write(ri, 8, 'B' if is_v else ('A' if is_A else ''), f)
+    ws.write(ri, 8, 'C' if h.get('cancelada') else ('B' if is_v else ('A' if is_A else '')), f)
     ws.write_string(ri, 9, str(h.get('escalacao_disp', '')), f)
     ri += 1
 

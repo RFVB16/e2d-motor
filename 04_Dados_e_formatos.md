@@ -64,7 +64,7 @@ Status pela cor da linha na página do SPPILOTS:
 | `#b7b7ff` | BREVE | confirmada, em breve (lilás) |
 | `#ffffff` | FUTURO | **não confirmada** (branca, horário previsto) |
 | `#ff0099`, `#000000` | ESPECIAL | marcação dos especiais |
-| `#66cc66` | — | cancelada (ignorar) |
+| `#66cc66` | CANCELADA | cancelada depois da escalação (verde); desde a v1.4 do script vai para o motor (02, 5.17) |
 | `#ffff00` | — | sem prático (ignorar) |
 
 Navio de 2 práticos: texto "(2 PRÁTICOS)" no nome, dois bigramas na coluna de prático ou "2PLT" na observação. Se ainda não há práticos definidos, o protótipo **duplica a linha** para que entrem as duas manobras.
