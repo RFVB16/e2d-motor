@@ -324,14 +324,9 @@ if not rt.empty and 'Status' in rt:
     _fixas |= {(_mn(t), str(v).strip()) for t, v, s_ in zip(rt.DT, rt.Vessel, rt.Status)
                if str(s_).strip().upper() in STATUS_FIXO}
 CONG = DIR / 'dados' / 'escalacao_finalizada.csv'
-CONG_ANT = DIR / 'dados' / 'escalacao_congelada.csv'   # regra anterior (1 h antes), 28-29/10/2026: só histórico
-if not CONG.exists() and CONG_ANT.exists():
-    # primeira rodada com a regra nova: do arquivo antigo fica só o que já começou/terminou (é passado)
-    _old = pd.read_csv(CONG_ANT, dtype=str)
-    _keep = _old[[(_mn(a), str(b).strip()) in _fixas for a, b in zip(_old.DT, _old.Vessel)]]
-    CONG.parent.mkdir(parents=True, exist_ok=True)
-    _keep.to_csv(CONG, index=False, encoding='utf-8')
-    print(f'[congela] regra nova (linha azul/vermelha): {len(_keep)} de {len(_old)} registros antigos mantidos')
+# (29/10/2026) O congelamento anterior (1 h antes, gerado com a troca direta) foi DESCARTADO a pedido da Praticagem:
+# não se congela o que foi gerado errado. O painel foi refeito do zero com as regras corretas e o congelamento
+# vale daí em diante. dados/escalacao_congelada.csv fica guardado, sem uso.
 _cg = pd.read_csv(CONG, dtype=str) if CONG.exists() else pd.DataFrame(columns=['DT', 'Vessel', 'Pratico', 'registrado_em'])
 _fz = defaultdict(list)
 for _r in _cg.itertuples():
