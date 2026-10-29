@@ -1,6 +1,7 @@
 # Histórico de versões
 
 ## 29/10/2026
+- **Painel:** a manobra cancelada depois da escalação aparece em verde, com o prático escalado e "C" na coluna A/B (06; 02, 5.17).
 - **Correção:** manobra branca (`FUTURO`) atrasada, já passada do horário e ainda na pauta, continua no painel e no motor (antes sumia). Caso KACEY 29/10 11:30 (SI): sem ela a previsão da E12 punha o SI na manobra seguinte (SUPER TOMIYASU 15:00) (02, 5.16).
 - **Manobra cancelada depois da escalação** (linha verde; decisão da Praticagem): não conta como manobra, o prático vai para a frente de todos e vale para a próxima manobra ainda não escalada (início a partir de 1 h depois de o cancelamento ser visto). Novo `dados/manobras_canceladas.csv`, variável `CANCEL` no motor, script do navegador v1.4 (envia a linha verde como `CANCELADA`) (02, 5.17). Novo `testes/testar_cancelamento.py`. Resultado do teste de 2026 não muda (100%).
 - **Painel:** na coluna Δt, o valor da manobra A (descanso longo) aparece em negrito amarelo com contorno preto (06).

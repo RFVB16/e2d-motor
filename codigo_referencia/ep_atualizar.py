@@ -1850,6 +1850,32 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
         else:
             juntadas.append((m, is_past))
 
+    # Manobra cancelada depois da escalação (linha verde no SPPilots): aparece em verde, com o prático que
+    # estava escalado; não conta como manobra (sem A/B e sem Δt) e o prático vai para a frente da fila (PACOTE 5.17)
+    try:
+        if juntadas:
+            _t0 = min(pd.Timestamp(x['datetime']) for x, _ in juntadas); _t1 = max(pd.Timestamp(x['datetime']) for x, _ in juntadas)
+            _rtc = pd.read_csv(PAUTA_RT, dtype=str)
+            _rtc = _rtc[_rtc['Status'].astype(str).str.strip().str.upper() == 'CANCELADA'] if 'Status' in _rtc.columns else _rtc.iloc[0:0]
+            _cpr = {}
+            _cf = _DIR / 'dados' / 'manobras_canceladas.csv'
+            if _cf.exists():
+                for _r in pd.read_csv(_cf, dtype=str).fillna('').itertuples():
+                    _cpr.setdefault((pd.Timestamp(_r.DT).floor('min'), str(_r.Vessel).strip()), []).append(str(_r.Pratico).strip())
+            _vc = set()
+            for _r in _rtc.itertuples():
+                _d = pd.Timestamp(_r.datetime).floor('min'); _v = str(_r.Vessel).strip()
+                if (_d, _v) in _vc or not (_t0 <= _d <= _t1):
+                    continue
+                _vc.add((_d, _v))
+                _pp = [x for x in _cpr.get((_d, _v), []) if x]
+                juntadas.append(({'datetime': _d, 'vessel': _v, 'de': str(_r.From).strip(), 'para': str(_r.To).strip(),
+                                  'pratico': '/'.join(_pp), 'ab': 'C', 'status': 'CANCELADA', 'cancelada': True,
+                                  'calado': '', 'bordo': '', 'proxima': '', 'escalacao': ''}, False))
+            juntadas.sort(key=lambda x: pd.Timestamp(x[0]['datetime']))
+    except Exception as _e:
+        print(f'[cancelada] não mostrada: {_e}')
+
     for m, is_past in juntadas:
         dt_s = pd.Timestamp(m['datetime']).strftime('%d/%m %H:%M')
         vessel = str(m['vessel'])
@@ -1873,6 +1899,8 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
         # Como no SPPilots: manobra de especial = linha cinza (escalada ou confirmada); preta depois de finalizada
         if is_esp_man or any(x.strip() in ESPECIAIS for x in str(m.get('pra_real', '')).split('/')):
             bg, fc = ('#000000', '#fff') if is_past else ('#a5a5a5', '#fff')
+        if m.get('cancelada'):
+            bg, fc = '#66cc66', '#000'
         # Especiais: NÃO altera fundo da linha — só destaca coluna PRT inline
         # Isso evita o visual "colado" quando especiais aparecem consecutivos
 
