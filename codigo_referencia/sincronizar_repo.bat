@@ -26,7 +26,7 @@ if exist "%PAC%" (
   for %%F in ("%PAC%\*.md") do copy /Y "%%~F" "%REPO%" >nul
   if exist "%PAC%\.gitignore" copy /Y "%PAC%\.gitignore" "%REPO%\.gitignore" >nul
   if not exist "%REPO%\testes" mkdir "%REPO%\testes"
-  for %%F in (rodar_referencia.py comparar.py testar_congelamento.py) do (
+  for %%F in (rodar_referencia.py comparar.py testar_congelamento.py testar_cancelamento.py) do (
     if exist "%PAC%\testes\%%F" copy /Y "%PAC%\testes\%%F" "%REPO%\testes\%%F" >nul
   )
   for %%D in (entrada esperado esperado_alternativo) do (
