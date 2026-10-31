@@ -1,7 +1,8 @@
 @echo off
-REM Conserta o repositorio do site (marcador da versao corrompido) e publica o painel atual.
+REM Conserta o repositorio do site (marcador da versao corrompido quando o PC desliga no meio do commit)
+REM e publica o painel atual. Desde 31/10/2026 usa a ultima versao enviada (origin/main), sem numero fixo.
 cd /d "%USERPROFILE%\ep-santos-publico"
-echo 80c9ad7b4783e14c689bedeb5d5bc05d7ee87e16> .git\refs\heads\main
+for /f "usebackq delims=" %%a in (".git\refs\remotes\origin\main") do echo %%a> .git\refs\heads\main
 git fetch origin
 git reset origin/main
 git add index.html
