@@ -1,6 +1,7 @@
 # Histórico de versões
 
 ## 31/10/2026
+- **Painel, Δt da B = tempo livre na Atalaia:** da chegada na Atalaia depois da A (início + T + lancha) até a saída da Atalaia para a B (início da B − lancha até o embarque), sem nenhum deslocamento; 0 se não sobra tempo (antes: entre inícios) (06).
 - **Relatório, linha do tempo:** quem emendou do turno anterior tem a barra começando na última manobra dele (E2D ou E12, a mais cedo), para o descanso que atravessa a troca de turno aparecer inteiro; linhas pretas marcam o início do turno e a virada do dia; marcas de 3 em 3 h alinhadas às 07:30. Quem veio de folga continua começando às 07:30 (06).
 - **Relatório, correção:** quando o prático estava de serviço no dia anterior ao turno (sem folga), o 1º descanso conta a partir da última manobra dele, como no Δt da pauta (ex.: AD, CARDIFF 30/10 09:00, 20h22). Antes aparecia só "antes da 1ª manobra" (06).
 - **Painel, descanso padronizado:** o Δt da A na pauta (amarelo) e o relatório usam o mesmo critério: do **fim** da manobra anterior (início + T + lancha até a Atalaia) até o **início** da manobra seguinte, sem descontar a 1 h de acionamento (decisão da Praticagem). Na B o Δt continua entre inícios (06).

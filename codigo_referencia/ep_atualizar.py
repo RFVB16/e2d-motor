@@ -1117,7 +1117,8 @@ def montar_dados(manobras, rt_idx):
         return '/'.join(x for x in saidas if x) if any(saidas) else ''
 
     def dt_inicios(m):
-        """Δt mostrado em cada linha. Na B: do INÍCIO da A até o INÍCIO da B. Na A (descanso longo, em amarelo):
+        """Δt mostrado em cada linha. Na B: tempo livre na Atalaia, da CHEGADA na Atalaia depois da A (início + T + lancha)
+        até a SAÍDA da Atalaia para a B (início da B − lancha até o embarque) — sem deslocamento (31/10/2026; antes: entre inícios). Na A (descanso longo, em amarelo):
         do FIM da manobra anterior (início + T + lancha até a Atalaia) até o INÍCIO da A — mesmo critério do
         relatório por prático (31/10/2026; antes: entre inícios). Em branco se a anterior foi em outro turno."""
         p = str(m.get('pratico', '')).strip()
@@ -1149,9 +1150,13 @@ def montar_dados(manobras, rt_idx):
             tot = int((dt - ini_ant).total_seconds() // 60)
             if tot <= 0 or tot > 48 * 60 or _saiu_do_servico(pi, ini_ant, dt):
                 saidas.append(''); continue
+            _fa = ini_ant if 'de' not in ant else _fim_b_efetivo(ini_ant, ant.get('de', ''), ant.get('para', ''))
             if str(m.get('ab', '')).strip().upper() == 'A':   # descanso: do fim efetivo da anterior até o início da A
-                _fa = ini_ant if 'de' not in ant else _fim_b_efetivo(ini_ant, ant.get('de', ''), ant.get('para', ''))
                 tot = max(0, int((dt - pd.Timestamp(_fa)).total_seconds() // 60))
+            elif str(m.get('ab', '')).strip().upper() == 'B':   # tempo livre na Atalaia (31/10/2026): da chegada na Atalaia
+                # depois da A (início + T + lancha) até a saída da Atalaia para a B (início da B − lancha até o embarque)
+                _sai = dt - pd.Timedelta(minutes=_lancha_atalaia_mod(m.get('de', '')))
+                tot = max(0, int((_sai - pd.Timestamp(_fa)).total_seconds() // 60))
             h_, mn_ = divmod(tot, 60)
             saidas.append(f'{h_}h{mn_:02d}' if h_ else f'{mn_}min')
         return '/'.join(x for x in saidas if x) if any(saidas) else ''
@@ -2400,7 +2405,7 @@ document.addEventListener('DOMContentLoaded',function(){{try{{if(localStorage.ge
       <table id="projtab" class="hide-esc">
         <thead><tr>
           <th>Navio</th><th>Local</th><th>Horário</th>
-          <th title="⚠ = em observação (manobras confirmadas, a partir da escalação 1 h antes): risco de atraso, ou escalado ainda em manobra (a anterior ainda não terminou pelo T na escalação). Toque no ⚠ para ver o motivo.">PRT</th><th>Calado</th><th>Bordo</th><th>A/B</th><th title="Na A (amarelo): descanso, do fim da manobra anterior (início + T + lancha até a Atalaia) até o início da A — o mesmo do relatório. Na B: do início da A até o início da B (mesmo prático, mesmo turno)">Δt</th><th class="esc-col">Escalação</th>
+          <th title="⚠ = em observação (manobras confirmadas, a partir da escalação 1 h antes): risco de atraso, ou escalado ainda em manobra (a anterior ainda não terminou pelo T na escalação). Toque no ⚠ para ver o motivo.">PRT</th><th>Calado</th><th>Bordo</th><th>A/B</th><th title="Na A (amarelo): descanso, do fim da manobra anterior (início + T + lancha até a Atalaia) até o início da A — o mesmo do relatório. Na B: tempo livre na Atalaia, da chegada depois da A (início + T + lancha) até a saída para a B (início da B − lancha até o embarque)">Δt</th><th class="esc-col">Escalação</th>
         </tr></thead>
         <tbody>{proj_html}</tbody>
       </table>
