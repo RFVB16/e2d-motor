@@ -66,7 +66,17 @@ def carregar(img, ano, mes):
     for s in np.arange(24, 31, 0.05):
         sc = sum(any(abs(h - (y0 + k * s)) <= 2 for h in hy) for k in range(nd + 1))
         if best is None or sc > best[0]: best = (sc, s)
+    # linhas extras abaixo do último dia (substitutos do D2 do fim do mês), até 8, dentro da imagem (31/10/2026)
     ys = [y0 + k * best[1] for k in range(nd + 1)]
+    # linhas extras abaixo do último dia (substitutos do D2 do fim do mês): só existem as bordas das células
+    # preenchidas, então cada linha é ajustada à borda real mais próxima (±4 px) (31/10/2026)
+    fr = dark[:, int(xs[0]):int(xs[-1])].mean(1)
+    for k in range(8):
+        yy = ys[-1] + best[1]
+        if yy >= H - 3: break
+        lo, hi = int(yy) - 4, min(H - 1, int(yy) + 5)
+        j = lo + int(np.argmax(fr[lo:hi]))
+        ys.append(float(j) if fr[j] > 0.02 else yy)
     return rgb, xs, ys, nd
 
 # ── célula ───────────────────────────────────────────────────────────────────
@@ -137,10 +147,20 @@ class Banco:
 def bloco_do_d1(d1):
     return ((d1 - D0).days // 2 + 2) % 6
 
-def _celula(imgs, data, c):
+def _celula(imgs, data, c, base=None):
+    """Célula do dia 'data' na coluna c. Com base (dia de referência), um dia depois do fim do mês de 'base'
+    é lido nas linhas extras abaixo do último dia da MESMA imagem (é ali que ficam os substitutos do D2)."""
+    if base is not None and (data.year, data.month) != (base.year, base.month) and data > base:
+        g = imgs.get((base.year, base.month))
+        if g is not None:
+            rgb, xs, ys, nd = g; r = nd - 1 + (data - dt.date(base.year, base.month, nd)).days
+            if r + 1 < len(ys):
+                return _crop(rgb, xs[c], xs[c + 1], ys[r], ys[r + 1])
+            return None
     g = imgs.get((data.year, data.month))
     if g is None: return None
     rgb, xs, ys, nd = g; r = data.day - 1
+    if r + 1 >= len(ys): return None
     return _crop(rgb, xs[c], xs[c + 1], ys[r], ys[r + 1])
 
 def pilhas(imgs, dia, d1):
@@ -149,24 +169,32 @@ def pilhas(imgs, dia, d1):
     for p in range(12):
         c = b * 12 + p; seq = [_celula(imgs, dia, c)]
         for k in range(1, 8):
-            cc = _celula(imgs, dia + dt.timedelta(days=sent * k), c)
+            cc = _celula(imgs, dia + dt.timedelta(days=sent * k), c, base=dia)
             if cc is None or not tem_texto(cc): break
             seq.append(cc)
         out.append([x for x in seq if x is not None])
     return out
 
-def quem_trabalha(seq, banco):
-    """Primeiro não riscado, do dono para fora. Devolve (sigla, semelhança) ou (None, 0)."""
-    for c in seq:
-        if not tem_texto(c) or riscado(c): continue
-        return banco.ler(c)
-    return None, 0.0
+def quem_trabalha(seq, banco, reais=None):
+    """Quem trabalha no slot: o primeiro NÃO riscado, do dono para fora. Se há mais de um não riscado na pilha
+    (o operador às vezes não risca o substituto anterior: 30-31/10/2026, FS/ -> GU -> AB, trabalhou o AB),
+    vale o que já manobrou de fato no turno (reais = práticos com manobra real nos dias do turno); sem essa
+    informação, o primeiro. Devolve (sigla, semelhança) ou (None, 0)."""
+    cand = [banco.ler(c) for c in seq if tem_texto(c) and not riscado(c)]
+    cand = [x for x in cand if x[0]]
+    if not cand: return None, 0.0
+    if len(cand) > 1 and reais:
+        ok = [x for x in cand if x[0] in reais]
+        if ok: return ok[0]
+    return cand[0]
 
-def escala_do_turno(imgs, d1, banco):
-    """{D1: [12 siglas], D2: [12 siglas]}. Slot sem leitura num dia usa o do outro dia do turno."""
+def escala_do_turno(imgs, d1, banco, reais=None):
+    """{D1: [12 siglas], D2: [12 siglas]}. Slot sem leitura num dia usa o do outro dia do turno.
+    reais: {data: práticos com manobra real naquele dia operacional} (desempata pilhas com 2+ não riscados)."""
     d2 = d1 + dt.timedelta(days=1)
-    r1 = [quem_trabalha(s, banco) for s in pilhas(imgs, d1, d1)]
-    r2 = [quem_trabalha(s, banco) for s in pilhas(imgs, d2, d1)]
+    rt = set().union(*[(reais or {}).get(d, set()) for d in (d1, d2)])
+    r1 = [quem_trabalha(s, banco, rt) for s in pilhas(imgs, d1, d1)]
+    r2 = [quem_trabalha(s, banco, rt) for s in pilhas(imgs, d2, d1)]
     w1 = [a[0] if a[0] else b[0] for a, b in zip(r1, r2)]
     w2 = [b[0] if b[0] else a[0] for a, b in zip(r1, r2)]
     sim = min([x[1] for x in r1 + r2 if x[0]] or [0])
@@ -188,6 +216,22 @@ def baixar(session, ano, mes):
 def _dias_d1(ano, mes):
     nd = calendar.monthrange(ano, mes)[1]
     return [dt.date(ano, mes, d) for d in range(1, nd + 1) if (dt.date(ano, mes, d) - D0).days % 2 == 0]
+
+def _reais(pasta):
+    """{dia operacional: práticos com manobra real} do historico_2026.csv (para desempatar pilhas)."""
+    try:
+        import csv
+        out = {}
+        with open(Path(pasta) / 'historico_2026.csv', encoding='utf-8-sig') as f:
+            for r in csv.DictReader(f):
+                p = (r.get('Pratico') or '').strip()
+                if not p: continue
+                t = dt.datetime.fromisoformat(str(r['datetime']).strip()[:19])
+                d = (t - dt.timedelta(hours=7, minutes=30)).date()
+                out.setdefault(d, set()).update(x.strip() for x in p.split('/') if x.strip())
+        return out
+    except Exception:
+        return {}
 
 def atualizar(senha, pasta, max_idade_min=50, hoje=None):
     """Baixa a escala gráfica do mês (e do vizinho perto da virada), lê quem trabalha em
@@ -221,12 +265,13 @@ def atualizar(senha, pasta, max_idade_min=50, hoje=None):
     except Exception as e:
         print(f'[Escala gráfica] aprendizado não feito: {e}')
     banco = Banco(Path(__file__).parent / 'escala_grafica_modelos.npz', extra)
+    reais = _reais(pasta)
     saida = pasta / 'inputs' / 'escala_grafica.json'
     res = json.loads(saida.read_text(encoding='utf-8')) if saida.exists() else {}
     for (a, m) in imgs:
         for d1 in _dias_d1(a, m):
             try:
-                E, sim = escala_do_turno(imgs, d1, banco)
+                E, sim = escala_do_turno(imgs, d1, banco, reais)
             except Exception as e:
                 print(f'[Escala gráfica] ERRO no turno {d1}: {e}'); continue
             for d, w in E.items():
