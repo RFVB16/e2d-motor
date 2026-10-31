@@ -64,6 +64,15 @@ if errorlevel 1 (
     del /f /q ".git\index" >nul 2>&1
     git reset >nul 2>&1
 )
+REM Marcador da versao (main) corrompido - acontece quando o computador desliga no meio do commit (25/10 e 30/10/2026).
+REM Volta o marcador para a ultima versao enviada ao GitHub (origin/main) e segue normalmente.
+git rev-parse --verify -q HEAD >nul 2>&1
+if errorlevel 1 (
+    echo [AVISO] Marcador da versao do site corrompido - voltando para a ultima versao enviada...
+    for /f "usebackq delims=" %%a in (".git\refs\remotes\origin\main") do echo %%a> .git\refs\heads\main
+    git fetch origin >nul 2>&1
+    git reset origin/main >nul 2>&1
+)
 git add index.html >nul
 REM Data/hora pelo PowerShell (o wmic foi removido nas versoes novas do Windows)
 for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd_HH:mm"') do set "_TS=%%a"
