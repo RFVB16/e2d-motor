@@ -532,22 +532,23 @@ def montar_relatorio(manobras):
     def calc(lst, ini, fimw):
         lst = sorted(lst, key=lambda z: z[0]); use = [z for z in lst if z[0] <= corte]
         gaps = []; prev = ini; prevlab = f'{ini:%H:%M}'; prevab = ''; prim = True
+        H0 = pd.Timedelta(0)   # 31/10/2026: descanso até o INÍCIO da manobra seguinte (sem a 1 h de acionamento), como na pauta
         for dt, end, lab, ab in use:
             lab = lab[:11] + (' (cancelada)' if ab == 'X' else '')   # descansos: só data e hora (sem navio e berço)
-            g = (dt - H - prev).total_seconds() / 60
+            g = (dt - H0 - prev).total_seconds() / 60
             if prim:   # das 07:30 até o 1º acionamento (1 h antes da 1ª manobra): não é descanso longo (29/10/2026)
                 if g > 0:
-                    gaps.append((prevlab, f'1º acionamento {dt - H:%d/%m %H:%M}', g, 'inicio', prev, dt - H, False))
+                    gaps.append((prevlab, f'1ª manobra {dt:%d/%m %H:%M}', g, 'inicio', prev, dt, False))
             else:
-                gaps.append((prevlab, lab, g, 'canc' if prevab == 'X' else ('ciclo' if prevab == 'A' else 'longo'), prev, dt - H, True))
+                gaps.append((prevlab, lab, g, 'canc' if prevab == 'X' else ('ciclo' if prevab == 'A' else 'longo'), prev, dt, True))
             prev = end; prevlab = lab; prevab = ab; prim = False
         fechado = fimw <= corte
         prox = [z[0] for z in lst if z[0] > corte]
-        lim = min([fimw, corte] + [prox[0] - H] if prox else [fimw, corte])
+        lim = min([fimw, corte] + [prox[0]] if prox else [fimw, corte])
         g = (lim - prev).total_seconds() / 60
         if g > 0:
-            _acn = bool(prox) and lim == prox[0] - H   # termina no acionamento da próxima: intervalo completo
-            gaps.append((prevlab, 'fim do serviço' if lim == fimw else ('acionamento ' + f'{prox[0]:%d/%m %H:%M}' if _acn else f'{corte:%d/%m %H:%M} (em andamento)'), g,
+            _acn = bool(prox) and lim == prox[0]   # termina no início da próxima: intervalo completo
+            gaps.append((prevlab, 'fim do serviço' if lim == fimw else ('próxima ' + f'{prox[0]:%d/%m %H:%M}' if _acn else f'{corte:%d/%m %H:%M} (em andamento)'), g,
                          'inicio' if prim else ('canc' if prevab == 'X' else ('ciclo' if (prevab == 'A' and lim != fimw) else 'longo')),
                          prev, lim, (not prim) and _acn, (not prim) and lim != fimw and not _acn))
         # madrugada (0h–5h): da saída à volta da Atalaia, unindo se < 2 h em terra
@@ -600,10 +601,10 @@ def montar_relatorio(manobras):
             for _g, _lst in ((g2, _INT['e2d']), (g12, _INT['e12'])):
                 for g in _g:
                     if g[6] and (_g is g12 or g[3] == 'longo'):
-                        _lst.append((od(g[5] + H), g[2]))
+                        _lst.append((od(g[5]), g[2]))
             lim_b = min(fimw, corte)
             def _seg(L, gaps):
-                ms = [[int(pd.Timestamp(max(ini, dt - H)).value // 10**6), int(pd.Timestamp(min(end, lim_b)).value // 10**6), ab, lab]
+                ms = [[int(pd.Timestamp(max(ini, dt)).value // 10**6), int(pd.Timestamp(min(end, lim_b)).value // 10**6), ab, lab]
                       for dt, end, lab, ab in sorted(L, key=lambda z: z[0]) if dt <= corte and ab != 'X']
                 gs = [[int(pd.Timestamp(g[4]).value // 10**6), int(pd.Timestamp(min(g[5], lim_b)).value // 10**6), round(g[2]),
                        'andamento' if g[7] else ('emendado' if g[3] == 'ciclo' and g[2] < 0 else g[3])] for g in gaps if g[4] < lim_b]
@@ -1095,9 +1096,9 @@ def montar_dados(manobras, rt_idx):
         return '/'.join(x for x in saidas if x) if any(saidas) else ''
 
     def dt_inicios(m):
-        """Δt mostrado em cada linha (A e B): do INÍCIO da manobra anterior do mesmo prático
-        até o INÍCIO desta (A→B na linha da B; B→A na linha da A). Em branco se a anterior
-        foi em outro turno (folga no meio ou mais de 48 h)."""
+        """Δt mostrado em cada linha. Na B: do INÍCIO da A até o INÍCIO da B. Na A (descanso longo, em amarelo):
+        do FIM da manobra anterior (início + T + lancha até a Atalaia) até o INÍCIO da A — mesmo critério do
+        relatório por prático (31/10/2026; antes: entre inícios). Em branco se a anterior foi em outro turno."""
         p = str(m.get('pratico', '')).strip()
         if not p or p in ESPECIAIS:
             return ''
@@ -1127,6 +1128,9 @@ def montar_dados(manobras, rt_idx):
             tot = int((dt - ini_ant).total_seconds() // 60)
             if tot <= 0 or tot > 48 * 60 or _saiu_do_servico(pi, ini_ant, dt):
                 saidas.append(''); continue
+            if str(m.get('ab', '')).strip().upper() == 'A':   # descanso: do fim efetivo da anterior até o início da A
+                _fa = ini_ant if 'de' not in ant else _fim_b_efetivo(ini_ant, ant.get('de', ''), ant.get('para', ''))
+                tot = max(0, int((dt - pd.Timestamp(_fa)).total_seconds() // 60))
             h_, mn_ = divmod(tot, 60)
             saidas.append(f'{h_}h{mn_:02d}' if h_ else f'{mn_}min')
         return '/'.join(x for x in saidas if x) if any(saidas) else ''
@@ -1134,7 +1138,7 @@ def montar_dados(manobras, rt_idx):
     # Δt da própria linha verde (cancelada): do início da anterior do prático até o horário da cancelada
     _CANC_DT.clear()
     for (_cd, _cv), _cl in _CANC_LIN.items():
-        _CANC_DT[(_cd, _cv)] = '/'.join(x for x in (dt_inicios({'pratico': p_, 'datetime': _cd, 'vessel': _cv}) for p_, _ in _cl) if x)
+        _CANC_DT[(_cd, _cv)] = '/'.join(x for x in (dt_inicios({'pratico': p_, 'datetime': _cd, 'vessel': _cv, 'ab': ab_}) for p_, ab_ in _cl) if x)
 
     # Aplica PROX em TODAS as listas — para qualquer manobra B,
     # mostra o tempo ate a proxima manobra do mesmo pratico.
@@ -2375,7 +2379,7 @@ document.addEventListener('DOMContentLoaded',function(){{try{{if(localStorage.ge
       <table id="projtab" class="hide-esc">
         <thead><tr>
           <th>Navio</th><th>Local</th><th>Horário</th>
-          <th title="⚠ = em observação (manobras confirmadas, a partir da escalação 1 h antes): risco de atraso, ou escalado ainda em manobra (a anterior ainda não terminou pelo T na escalação). Toque no ⚠ para ver o motivo.">PRT</th><th>Calado</th><th>Bordo</th><th>A/B</th><th title="Δt entre inícios: na B, do início da A até o início da B; na A, do início da B anterior até o início da A (mesmo prático, mesmo turno)">Δt</th><th class="esc-col">Escalação</th>
+          <th title="⚠ = em observação (manobras confirmadas, a partir da escalação 1 h antes): risco de atraso, ou escalado ainda em manobra (a anterior ainda não terminou pelo T na escalação). Toque no ⚠ para ver o motivo.">PRT</th><th>Calado</th><th>Bordo</th><th>A/B</th><th title="Na A (amarelo): descanso, do fim da manobra anterior (início + T + lancha até a Atalaia) até o início da A — o mesmo do relatório. Na B: do início da A até o início da B (mesmo prático, mesmo turno)">Δt</th><th class="esc-col">Escalação</th>
         </tr></thead>
         <tbody>{proj_html}</tbody>
       </table>
@@ -2408,22 +2412,22 @@ var a=X(g[0]),b=X(g[1]);if(b-a<0.5)return;
 o+='<rect x="'+a.toFixed(1)+'" y="'+y+'" width="'+(b-a).toFixed(1)+'" height="24" fill="'+c+'"><title>'+_hm(g[0])+' → '+_hm(g[1])+' · '+_h(g[2])+'</title></rect>';
 if(b-a>38&&t!=='ciclo'&&t!=='inicio'&&t!=='canc')o+='<text x="'+((a+b)/2).toFixed(1)+'" y="'+(y+16)+'" text-anchor="middle" font-size="11" fill="'+(t==='andamento'?'#000':'#fff')+'">'+_h(g[2])+(t==='andamento'?'…':'')+'</text>';}});
 var fa=null;ms.forEach(function(m){{var a=X(m[0]),b=X(m[1]),em=false;if(fa!==null&&a<fa){{a=fa;em=true;}}if(b<a+3)b=a+3;
-o+='<rect x="'+a.toFixed(1)+'" y="'+y+'" width="'+(b-a).toFixed(1)+'" height="24" fill="#1f3a5f" stroke="#fff" stroke-width="1"><title>'+(m[2]?m[2]+' · ':'')+(m[3]||'')+' · acionamento '+_hm(m[0])+' · fim '+_hm(m[1])+'</title></rect>';
+o+='<rect x="'+a.toFixed(1)+'" y="'+y+'" width="'+(b-a).toFixed(1)+'" height="24" fill="#1f3a5f" stroke="#fff" stroke-width="1"><title>'+(m[2]?m[2]+' · ':'')+(m[3]||'')+' · início '+_hm(m[0])+' · fim '+_hm(m[1])+'</title></rect>';
 if(m[2]&&b-a>11)o+='<text x="'+((a+b)/2).toFixed(1)+'" y="'+(y+16)+'" text-anchor="middle" font-size="11" fill="#fff">'+m[2]+'</text>';
-if(em)o+='<path d="M'+(a-3).toFixed(1)+' '+(y-5)+' l6 0 l-3 5 z" fill="#c62828"><title>emendada: acionada antes do fim da anterior</title></path>';fa=b;}});return o;}}
+if(em)o+='<path d="M'+(a-3).toFixed(1)+' '+(y-5)+' l6 0 l-3 5 z" fill="#c62828"><title>emendada: começa antes do fim da anterior (T + lancha)</title></path>';fa=b;}});return o;}}
 var tk='';for(var t=r.b0;t<=r.b1+60000;t+=3*3600000){{var x=X(t),an=x<12?'start':(x>W-12?'end':'middle');tk+='<line x1="'+x.toFixed(1)+'" y1="6" x2="'+x.toFixed(1)+'" y2="66" stroke="#bbb" stroke-dasharray="2,3"/><text x="'+x.toFixed(1)+'" y="78" font-size="10" text-anchor="'+an+'" fill="#555">'+_hm(t)+'</text>';}}
 var dv='';if(r.d2!==r.d1){{var xd=X(r.b0+86400000);if(xd>0&&xd<W)dv='<line x1="'+xd.toFixed(1)+'" y1="4" x2="'+xd.toFixed(1)+'" y2="68" stroke="#000" stroke-width="1.5"/>';}}
 return '<div class="barra"><svg viewBox="-40 0 '+(W+48)+' 84" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Arial">'+tk+
 '<text x="-6" y="24" text-anchor="end" font-size="12" font-weight="600">E2D</text>'+linha(r.b2,8)+
 '<text x="-6" y="56" text-anchor="end" font-size="12" font-weight="600">E12</text>'+linha(r.b12,40)+dv+'</svg></div>'+
-'<div class="leg"><span style="background:#1f3a5f"></span>manobra (acionamento → fim + lancha)<span style="background:#2e7d32"></span>descanso ≥ 8 h<span style="background:#ef8f00"></span>5–8 h<span style="background:#c62828"></span>&lt; 5 h<span style="background:#f3d36b"></span>dentro do ciclo (A→B)<span style="background:#7cc47f"></span>em andamento<span style="background:#d9d9d9"></span>antes da 1ª manobra<span style="background:#c62828;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:6px solid #c62828;background:none"></span>emendada</div>';}}
+'<div class="leg"><span style="background:#1f3a5f"></span>manobra (início → fim + lancha)<span style="background:#2e7d32"></span>descanso ≥ 8 h<span style="background:#ef8f00"></span>5–8 h<span style="background:#c62828"></span>&lt; 5 h<span style="background:#f3d36b"></span>dentro do ciclo (A→B)<span style="background:#7cc47f"></span>em andamento<span style="background:#d9d9d9"></span>antes da 1ª manobra<span style="background:#c62828;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:6px solid #c62828;background:none"></span>emendada</div>';}}
 function fecharRel(){{document.getElementById('relbox').style.display='none';}}
 function abrirRel(p,d){{var k=REL.i[p+'|'+d],r=k&&REL.d[k];if(!r){{document.getElementById('relin').innerHTML='<span class="x" onclick="fecharRel()">×</span>Sem relatório para '+p+' neste dia (fora do turno atual).';document.getElementById('relbox').style.display='block';return;}}
 var a=r.s12,b=r.s2,M=function(v){{return v===null||v===undefined?'—':_h(v);}};
 var dias='';[r.d1,r.d2].filter(function(x,i,arr){{return arr.indexOf(x)===i;}}).forEach(function(dd){{var z=REL.dia[dd];if(z&&z.e2d&&z.e12)dias+='<div class="dia"><b>Dia '+dd.slice(8,10)+'/'+dd.slice(5,7)+', todos os práticos:</b> descanso longo típico da E2D <b>'+_h(z.e2d.med)+'</b> × intervalo típico da E12 <b>'+_h(z.e12.med)+'</b> · abaixo de 5 h: E2D '+z.e2d.lt5+'% × E12 '+z.e12.lt5+'%</div>';}});
 var row=function(n,x,y){{return '<tr><td>'+n+'</td><td>'+x+'</td><td>'+y+'</td></tr>';}};
 var h='<span class="x" onclick="fecharRel()">×</span>'+
-'<b>'+r.p+' · turno '+r.ini+' → '+r.fim+'</b><br><small>'+(a.fechado?'':'Comparação até '+r.corte+' (depois disso a E12 ainda não tem nome). ')+'Descanso = do fim da manobra (início + T + lancha até a Atalaia) até o acionamento da seguinte (1 h antes). Na E2D vale o descanso longo (da B até a A); na E12, todos os intervalos (a vez volta a cada 12).</small>'+dias+
+'<b>'+r.p+' · turno '+r.ini+' → '+r.fim+'</b><br><small>'+(a.fechado?'':'Comparação até '+r.corte+' (depois disso a E12 ainda não tem nome). ')+'Descanso = do fim da manobra (início + T + lancha até a Atalaia) até o início da seguinte — o mesmo número em amarelo na pauta. Na E2D vale o descanso longo (da B até a A); na E12, todos os intervalos (a vez volta a cada 12).</small>'+dias+
 '<table><tr><th></th><th>E2D (descanso longo, da B até a A)</th><th>E12 real (todos os intervalos)</th></tr>'+
 row('Descanso típico','<span class="big ok">'+M(r.c2.med)+'</span>','<span class="big">'+M(r.c12.med)+'</span>')+
 row('Quantos',r.c2.n,r.c12.n)+row('Abaixo de 5 h',r.c2.lt5,r.c12.lt5)+row('Manobras',b.n,a.n)+row('Trabalho na madrugada (0h–5h)',_h(b.mad),_h(a.mad))+'</table>'+
