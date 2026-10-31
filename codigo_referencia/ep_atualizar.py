@@ -621,14 +621,16 @@ def montar_relatorio(manobras):
                     if g[6] and (_g is g12 or g[3] == 'longo'):
                         _lst.append((od(g[5]), g[2]))
             lim_b = min(fimw, corte)
-            def _seg(L, gaps):
-                ms = [[int(pd.Timestamp(max(ini, dt)).value // 10**6), int(pd.Timestamp(min(end, lim_b)).value // 10**6), ab, lab]
-                      for dt, end, lab, ab in sorted(L, key=lambda z: z[0]) if dt <= corte and ab != 'X']
-                gs = [[int(pd.Timestamp(max(g[4], ini)).value // 10**6), int(pd.Timestamp(min(g[5], lim_b)).value // 10**6), round(g[2]),
+            # emendou do turno anterior? a barra recua até o início da última manobra dele (E2D ou E12, a mais cedo)
+            _b0 = min([ini] + [z[0] for z in (a2, a12) if z])
+            def _seg(L, gaps, ant):
+                ms = [[int(pd.Timestamp(max(_b0, dt)).value // 10**6), int(pd.Timestamp(min(end, lim_b)).value // 10**6), ab, lab]
+                      for dt, end, lab, ab in sorted(L + ([ant] if ant else []), key=lambda z: z[0]) if dt <= corte and ab != 'X']
+                gs = [[int(pd.Timestamp(max(g[4], _b0)).value // 10**6), int(pd.Timestamp(min(g[5], lim_b)).value // 10**6), round(g[2]),
                        'andamento' if g[7] else ('emendado' if g[3] == 'ciclo' and g[2] < 0 else g[3]),
-                       f'{g[4]:%d/%m %H:%M}' if g[4] < ini else ''] for g in gaps if g[4] < lim_b]
+                       f'{g[4]:%d/%m %H:%M}' if g[4] < _b0 else ''] for g in gaps if g[4] < lim_b]
                 return ms, gs
-            sb2 = _seg(l2, g2); sb12 = _seg(l12, g12)
+            sb2 = _seg(l2, g2, a2); sb12 = _seg(l12, g12, a12)
             fmt = lambda L: [dict(t=lab, f='' if ab == 'X' else f'{end:%H:%M}', fut=bool(dt > corte), ab='' if ab == 'X' else ab) for dt, end, lab, ab in sorted(L, key=lambda z: z[0])]
             D[key] = dict(p=p, ini=f'{ini:%d/%m %H:%M}', fim=f'{fimw:%d/%m %H:%M}', corte=f'{corte:%d/%m %H:%M}',
                           m12=fmt(l12), m2=fmt(l2),
@@ -637,7 +639,7 @@ def montar_relatorio(manobras):
                           s12=s12, s2=s2,
                           c2=dict(med=_med(_l2), n=len(_l2), lt5=sum(1 for v in _l2 if v < 300)),
                           c12=dict(med=_med(_l12), n=len(_l12), lt5=sum(1 for v in _l12 if v < 300)),
-                          b0=int(pd.Timestamp(ini).value // 10**6), b1=int(pd.Timestamp(lim_b).value // 10**6),
+                          b0=int(pd.Timestamp(_b0).value // 10**6), b1=int(pd.Timestamp(lim_b).value // 10**6), vi=int(pd.Timestamp(ini).value // 10**6),
                           b2=sb2, b12=sb12, d1=f'{od(ini)}', d2=f'{od(dias[-1])}')
     # linha do dia (todos os práticos): descanso longo típico da E2D × intervalo típico da E12, e % abaixo de 5 h
     DIA = {}
@@ -2435,12 +2437,12 @@ var fa=null;ms.forEach(function(m){{var a=X(m[0]),b=X(m[1]),em=false;if(fa!==nul
 o+='<rect x="'+a.toFixed(1)+'" y="'+y+'" width="'+(b-a).toFixed(1)+'" height="24" fill="#1f3a5f" stroke="#fff" stroke-width="1"><title>'+(m[2]?m[2]+' · ':'')+(m[3]||'')+' · início '+_hm(m[0])+' · fim '+_hm(m[1])+'</title></rect>';
 if(m[2]&&b-a>11)o+='<text x="'+((a+b)/2).toFixed(1)+'" y="'+(y+16)+'" text-anchor="middle" font-size="11" fill="#fff">'+m[2]+'</text>';
 if(em)o+='<path d="M'+(a-3).toFixed(1)+' '+(y-5)+' l6 0 l-3 5 z" fill="#c62828"><title>emendada: começa antes do fim da anterior (T + lancha)</title></path>';fa=b;}});return o;}}
-var tk='';for(var t=r.b0;t<=r.b1+60000;t+=3*3600000){{var x=X(t),an=x<12?'start':(x>W-12?'end':'middle');tk+='<line x1="'+x.toFixed(1)+'" y1="6" x2="'+x.toFixed(1)+'" y2="66" stroke="#bbb" stroke-dasharray="2,3"/><text x="'+x.toFixed(1)+'" y="78" font-size="10" text-anchor="'+an+'" fill="#555">'+_hm(t)+'</text>';}}
-var dv='';if(r.d2!==r.d1){{var xd=X(r.b0+86400000);if(xd>0&&xd<W)dv='<line x1="'+xd.toFixed(1)+'" y1="4" x2="'+xd.toFixed(1)+'" y2="68" stroke="#000" stroke-width="1.5"/>';}}
+var tk='',t0=r.vi;while(t0-3*3600000>=r.b0)t0-=3*3600000;for(var t=t0;t<=r.b1+60000;t+=3*3600000){{var x=X(t),an=x<12?'start':(x>W-12?'end':'middle');tk+='<line x1="'+x.toFixed(1)+'" y1="6" x2="'+x.toFixed(1)+'" y2="66" stroke="#bbb" stroke-dasharray="2,3"/><text x="'+x.toFixed(1)+'" y="78" font-size="10" text-anchor="'+an+'" fill="#555">'+_hm(t)+'</text>';}}
+var dv='';[r.vi,r.vi+86400000].forEach(function(v,i){{if(i===1&&r.d2===r.d1)return;var xd=X(v);if(xd>0.5&&xd<W)dv+='<line x1="'+xd.toFixed(1)+'" y1="4" x2="'+xd.toFixed(1)+'" y2="68" stroke="#000" stroke-width="1.5"><title>'+(i===0?'início do turno':'virada do dia')+'</title></line>';}});
 return '<div class="barra"><svg viewBox="-40 0 '+(W+48)+' 84" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Arial">'+tk+
 '<text x="-6" y="24" text-anchor="end" font-size="12" font-weight="600">E2D</text>'+linha(r.b2,8)+
 '<text x="-6" y="56" text-anchor="end" font-size="12" font-weight="600">E12</text>'+linha(r.b12,40)+dv+'</svg></div>'+
-'<div class="leg"><span style="background:#1f3a5f"></span>manobra (início → fim + lancha)<span style="background:#2e7d32"></span>descanso ≥ 8 h<span style="background:#ef8f00"></span>5–8 h<span style="background:#c62828"></span>&lt; 5 h<span style="background:#f3d36b"></span>dentro do ciclo (A→B)<span style="background:#7cc47f"></span>em andamento<span style="background:#d9d9d9"></span>antes da 1ª manobra · ◂ descanso que começou antes do turno<span style="background:#c62828;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:6px solid #c62828;background:none"></span>emendada</div>';}}
+'<div class="leg"><span style="background:#1f3a5f"></span>manobra (início → fim + lancha)<span style="background:#2e7d32"></span>descanso ≥ 8 h<span style="background:#ef8f00"></span>5–8 h<span style="background:#c62828"></span>&lt; 5 h<span style="background:#f3d36b"></span>dentro do ciclo (A→B)<span style="background:#7cc47f"></span>em andamento<span style="background:#d9d9d9"></span>antes da 1ª manobra · linha preta: início do turno e virada do dia (quem emendou do turno anterior aparece desde a última manobra)<span style="background:#c62828;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:6px solid #c62828;background:none"></span>emendada</div>';}}
 function fecharRel(){{document.getElementById('relbox').style.display='none';}}
 function abrirRel(p,d){{var k=REL.i[p+'|'+d],r=k&&REL.d[k];if(!r){{document.getElementById('relin').innerHTML='<span class="x" onclick="fecharRel()">×</span>Sem relatório para '+p+' neste dia (fora do turno atual).';document.getElementById('relbox').style.display='block';return;}}
 var a=r.s12,b=r.s2,M=function(v){{return v===null||v===undefined?'—':_h(v);}};
