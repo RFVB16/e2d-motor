@@ -41,7 +41,7 @@ Tabela por semana: período, manobras (média/dia), Δt médio efetivo, posiçõ
 - **DL efetivo** = início da A − fim efetivo da B anterior do mesmo prático, se não houve folga entre elas (o prático esteve escalado em todos os dias operacionais entre as duas).
 - **Disponibilidade** (igual ao motor) = arredonda ao quarto de hora mais próximo (início da última manobra + T + margem + lancha do destino dela até a origem da próxima); margem 45 min se a próxima é entrada (sai de FB), 25 min nas demais.
 - **Posições após B**: quantas manobras ocorrem entre a B de um prático e a A seguinte dele.
-- **⚠ de observação (PRT)**: só em manobras confirmadas, a partir da escalação (1 h antes) e nos últimos 2 dias. Passando o mouse (ou tocando) no ⚠ aparece o motivo: **"Risco de atraso (XX)"** = fim previsto da A (início + T) + lancha a menos de 15 min do início da B; **"Escalado ainda a bordo (XX)"** = na escalação da B (início − 60 min) o prático ainda tinha mais de 30 min de A pelo T (risco de manipulação). Registro em `dados/observacao_log.csv`.
+- **⚠ de observação (PRT)**: só em manobras confirmadas, a partir da escalação (1 h antes) e nos últimos 2 dias. Passando o mouse (ou tocando) no ⚠ aparece o motivo: **"Risco de atraso (XX)"** = fim previsto da A (início + T) + lancha a menos de 15 min do início da B; **"Escalado ainda em manobra (XX)"** = na escalação (início − 60 min), em A ou B, a manobra anterior do mesmo prático ainda não tinha terminado pelo T (início + T). Até 31/10/2026 só valia na B e com mais de 30 min pela frente. Registro em `dados/observacao_log.csv`.
 
 ## 6.6 Requisitos não funcionais
 - Atualização a cada 1–5 min (protótipo: 15 min).

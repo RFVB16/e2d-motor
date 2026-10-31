@@ -1,5 +1,8 @@
 # Histórico de versões
 
+## 31/10/2026
+- **Painel, ⚠ "Escalado ainda em manobra":** aparece sempre que, na escalação (1 h antes), a manobra anterior do mesmo prático ainda não terminou pelo T, em A ou B (antes: "Escalado ainda a bordo", só na B e com mais de 30 min pela frente) (06).
+
 ## 29/10/2026
 - **Painel recusa pauta de outra página:** se a maioria das manobras já passadas da `pauta_rt.csv` não existe no histórico (mín. 5), ela é guardada em `dados/pauta_rejeitada_<data hora>.csv` e o painel usa a última pauta boa (`dados/pauta_rt_ultima_boa.csv`). Caso: 29/10 15:03, 73 manobras de outra consulta congeladas por engano (removidas).
 - **Painel, relatório por prático:** o trecho das 07:30 até o 1º acionamento aparece como "07:30 → 1º acionamento" e não conta mais como descanso longo; a manobra cancelada entra no relatório (o descanso vai até o acionamento dela; não conta como manobra).

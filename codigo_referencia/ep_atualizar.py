@@ -659,13 +659,13 @@ def info_pauta_rt():
 # ── Manobras em observação (atraso / escalação alterada) ─────────────────────
 OBS_FOLGA_MIN = 15      # B com menos que isso entre o fim previsto da A (+ lancha) e o início: "apertada"
 OBS_JANELA_MIN = 60     # a escalação acontece 1 h antes da manobra
-OBS_DENTRO_T_MIN = 30   # na escalação, ainda faltam mais de 30 min para o fim previsto da A
+OBS_DENTRO_T_MIN = 0    # na escalação, a manobra anterior ainda não terminou pelo T (31/10/2026; antes: mais de 30 min, só na B)
 
 def marcar_observacao(manobras):
     """Marca m['obs_e2d'] (lista de motivos) nas manobras que merecem observação:
        1) B apertada (risco de atraso): pouca folga entre o fim previsto da A do mesmo prático e a B;
-       2) dentro do T (risco de manipulação): na escalação da B (1 h antes) o prático ainda está na A,
-          com mais de 30 min até o fim previsto pelo T.
+       2) escalado ainda em manobra: na escalação (1 h antes), A ou B, a manobra anterior do mesmo prático
+          ainda não terminou pelo T (desde 31/10/2026; antes só na B e com mais de 30 min pela frente).
     Só manobras confirmadas e já escaladas (<= 1 h antes) são marcadas.
     O registro fica em dados/escalacao_registro.json e os casos em dados/observacao_log.csv."""
     import json, csv
@@ -720,7 +720,7 @@ def marcar_observacao(manobras):
             if p in ESPECIAIS:
                 continue
             ant = ult.get(p)
-            if (m.get('ab') == 'B' and ant is not None and conf(m) and dt - now <= pd.Timedelta(minutes=OBS_JANELA_MIN)
+            if (m.get('ab') in ('A', 'B') and ant is not None and conf(m) and dt - now <= pd.Timedelta(minutes=OBS_JANELA_MIN)
                     and dt >= now - pd.Timedelta(days=2)
                     and dt - pd.Timestamp(ant['datetime']) < pd.Timedelta(hours=16)):
                 try:
@@ -729,7 +729,7 @@ def marcar_observacao(manobras):
                     resta = (fimA - (dt - pd.Timedelta(minutes=OBS_JANELA_MIN))).total_seconds() / 60
                     if resta > OBS_DENTRO_T_MIN:
                         m['obs_e2d'].append(f'dentro do T ({p}): na escalação (1 h antes) ainda faltavam {resta:.0f} min '
-                                            f'para o fim previsto da A ({str(ant["vessel"]).strip()} {pd.Timestamp(ant["datetime"]):%H:%M})')
+                                            f'para o fim previsto da manobra anterior ({str(ant["vessel"]).strip()} {pd.Timestamp(ant["datetime"]):%H:%M})')
                 except Exception:
                     pass
             ult[p] = m
@@ -2016,7 +2016,7 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
                 quem = f' ({quem})' if quem else ''
                 if o.startswith('B apertada'):
                     return f'Risco de atraso{quem}: pouco tempo entre o fim previsto da A e esta manobra. {det.strip()}'
-                return f'Escalado ainda a bordo{quem}: {det.strip()}'
+                return f'Escalado ainda em manobra{quem}: {det.strip()}'
             _txt = ' | '.join(_explica(o) for o in _obs)
             _tit = _html.escape(_txt)
             ep_cell = ep_cell.replace('</td>', f'<span class="obsx" tabindex="0" title="{_tit}" '
@@ -2324,7 +2324,7 @@ document.addEventListener('DOMContentLoaded',function(){{try{{if(localStorage.ge
       <table id="projtab" class="hide-esc">
         <thead><tr>
           <th>Navio</th><th>Local</th><th>Horário</th>
-          <th title="⚠ = em observação (manobras confirmadas, a partir da escalação 1 h antes): risco de atraso, ou escalado ainda a bordo (mais de 30 min de A pela frente). Toque no ⚠ para ver o motivo.">PRT</th><th>Calado</th><th>Bordo</th><th>A/B</th><th title="Δt entre inícios: na B, do início da A até o início da B; na A, do início da B anterior até o início da A (mesmo prático, mesmo turno)">Δt</th><th class="esc-col">Escalação</th>
+          <th title="⚠ = em observação (manobras confirmadas, a partir da escalação 1 h antes): risco de atraso, ou escalado ainda em manobra (a anterior ainda não terminou pelo T na escalação). Toque no ⚠ para ver o motivo.">PRT</th><th>Calado</th><th>Bordo</th><th>A/B</th><th title="Δt entre inícios: na B, do início da A até o início da B; na A, do início da B anterior até o início da A (mesmo prático, mesmo turno)">Δt</th><th class="esc-col">Escalação</th>
         </tr></thead>
         <tbody>{proj_html}</tbody>
       </table>
