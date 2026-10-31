@@ -173,6 +173,19 @@ if _EG.exists():
             _n += 1
     print(f'[escala] escala gráfica do SPPilots aplicada em {_n} dias')
 
+# Correção manual da escala (dados/escala_manual.json: {"AAAA-MM-DD": [12 bigramas na ordem dos slots]}).
+# Vale acima da escala gráfica: usada quando a leitura da imagem do SPPilots erra (ex.: 31/10/2026).
+_EM = DIR / 'dados' / 'escala_manual.json'
+if _EM.exists():
+    import json as _json
+    _n = 0
+    for _k, _w in _json.loads(_EM.read_text(encoding='utf-8')).items():
+        _d = dt.date.fromisoformat(_k)
+        if _d in plano and _w and len(_w) == 12:
+            plano[_d] = (plano[_d][0], [J(x) if x else plano[_d][1][i] for i, x in enumerate(_w)])
+            _n += 1
+    print(f'[escala] correção manual aplicada em {_n} dias')
+
 
 def _custo(esc, seq):
     reg = [x for x in esc if x not in ESP and x is not None]
