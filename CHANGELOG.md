@@ -1,7 +1,7 @@
 # Histórico de versões
 
 ## 31/10/2026
-- **Painel, relatório por prático refeito:** compara o descanso longo da E2D (da B até a A) com **todos** os intervalos da E12 real (na E12 todo intervalo é descanso); linha do dia com todos os práticos (descanso típico e % abaixo de 5 h); **linha do tempo** comparando as duas escalas no turno; intervalos marcados como descanso longo, dentro do ciclo, emendado, antes da 1ª manobra e em andamento (os quatro últimos fora da comparação). Saem "maior descanso" e "descanso útil total" (06).
+- **Painel, relatório por prático refeito:** compara o descanso longo da E2D (da B até a A) com **todos** os intervalos da E12 real (na E12 todo intervalo é descanso); linha do dia com todos os práticos (descanso típico e % abaixo de 5 h); **linha do tempo** comparando as duas escalas no turno; intervalos marcados como descanso longo, dentro do ciclo, emendado, antes da 1ª manobra e em andamento (os quatro últimos fora da comparação). Saem "maior descanso", "descanso útil total" e as tabelas de manobras e intervalos: a linha do tempo mostra tudo (passar o mouse ou tocar num trecho mostra a manobra ou o descanso) (06).
 - **Painel, correção:** em navio de 2 práticos o Δt da A agora fica amarelo também quando o Δt do outro prático está em branco (antes, com uma parte só, o destaque se perdia) (06).
 - **Painel, ⚠ "Escalado ainda em manobra":** aparece sempre que, na escalação (1 h antes), a manobra anterior do mesmo prático ainda não terminou pelo T, em A ou B (antes: "Escalado ainda a bordo", só na B e com mais de 30 min pela frente) (06).
 

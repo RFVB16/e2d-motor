@@ -603,7 +603,7 @@ def montar_relatorio(manobras):
                         _lst.append((od(g[5] + H), g[2]))
             lim_b = min(fimw, corte)
             def _seg(L, gaps):
-                ms = [[int(pd.Timestamp(max(ini, dt - H)).value // 10**6), int(pd.Timestamp(min(end, lim_b)).value // 10**6), ab]
+                ms = [[int(pd.Timestamp(max(ini, dt - H)).value // 10**6), int(pd.Timestamp(min(end, lim_b)).value // 10**6), ab, lab]
                       for dt, end, lab, ab in sorted(L, key=lambda z: z[0]) if dt <= corte and ab != 'X']
                 gs = [[int(pd.Timestamp(g[4]).value // 10**6), int(pd.Timestamp(min(g[5], lim_b)).value // 10**6), round(g[2]),
                        'andamento' if g[7] else ('emendado' if g[3] == 'ciclo' and g[2] < 0 else g[3])] for g in gaps if g[4] < lim_b]
@@ -2408,7 +2408,7 @@ var a=X(g[0]),b=X(g[1]);if(b-a<0.5)return;
 o+='<rect x="'+a.toFixed(1)+'" y="'+y+'" width="'+(b-a).toFixed(1)+'" height="24" fill="'+c+'"><title>'+_hm(g[0])+' → '+_hm(g[1])+' · '+_h(g[2])+'</title></rect>';
 if(b-a>38&&t!=='ciclo'&&t!=='inicio'&&t!=='canc')o+='<text x="'+((a+b)/2).toFixed(1)+'" y="'+(y+16)+'" text-anchor="middle" font-size="11" fill="'+(t==='andamento'?'#000':'#fff')+'">'+_h(g[2])+(t==='andamento'?'…':'')+'</text>';}});
 var fa=null;ms.forEach(function(m){{var a=X(m[0]),b=X(m[1]),em=false;if(fa!==null&&a<fa){{a=fa;em=true;}}if(b<a+3)b=a+3;
-o+='<rect x="'+a.toFixed(1)+'" y="'+y+'" width="'+(b-a).toFixed(1)+'" height="24" fill="#1f3a5f" stroke="#fff" stroke-width="1"><title>manobra: acionamento '+_hm(m[0])+' · fim '+_hm(m[1])+'</title></rect>';
+o+='<rect x="'+a.toFixed(1)+'" y="'+y+'" width="'+(b-a).toFixed(1)+'" height="24" fill="#1f3a5f" stroke="#fff" stroke-width="1"><title>'+(m[2]?m[2]+' · ':'')+(m[3]||'')+' · acionamento '+_hm(m[0])+' · fim '+_hm(m[1])+'</title></rect>';
 if(m[2]&&b-a>11)o+='<text x="'+((a+b)/2).toFixed(1)+'" y="'+(y+16)+'" text-anchor="middle" font-size="11" fill="#fff">'+m[2]+'</text>';
 if(em)o+='<path d="M'+(a-3).toFixed(1)+' '+(y-5)+' l6 0 l-3 5 z" fill="#c62828"><title>emendada: acionada antes do fim da anterior</title></path>';fa=b;}});return o;}}
 var tk='';for(var t=r.b0;t<=r.b1+60000;t+=3*3600000){{var x=X(t),an=x<12?'start':(x>W-12?'end':'middle');tk+='<line x1="'+x.toFixed(1)+'" y1="6" x2="'+x.toFixed(1)+'" y2="66" stroke="#bbb" stroke-dasharray="2,3"/><text x="'+x.toFixed(1)+'" y="78" font-size="10" text-anchor="'+an+'" fill="#555">'+_hm(t)+'</text>';}}
@@ -2428,9 +2428,7 @@ var h='<span class="x" onclick="fecharRel()">×</span>'+
 row('Descanso típico','<span class="big ok">'+M(r.c2.med)+'</span>','<span class="big">'+M(r.c12.med)+'</span>')+
 row('Quantos',r.c2.n,r.c12.n)+row('Abaixo de 5 h',r.c2.lt5,r.c12.lt5)+row('Manobras',b.n,a.n)+row('Trabalho na madrugada (0h–5h)',_h(b.mad),_h(a.mad))+'</table>'+
 '<b>Linha do tempo do turno</b>'+_barra(r)+
-'<div class="cols"><div><b>E2D — manobras</b><table><tr><th>Início · navio</th><th>Fim*</th></tr>'+_lista(r.m2)+'</table><b>E2D — intervalos</b><table>'+_gaps(r.g2)+'</table></div>'+
-'<div><b>E12 real — manobras</b><table><tr><th>Início · navio</th><th>Fim*</th></tr>'+_lista(r.m12)+'</table><b>E12 real — intervalos (todos)</b><table>'+_gaps(r.g12)+'</table></div></div>'+
-'<small>* Fim = início + T da tabela + lancha até a Atalaia. Fora da comparação (fundo amarelo): dentro do ciclo, emendado, antes da 1ª manobra, em andamento. Manobras da E2D depois de '+r.corte+' em cinza.</small>';
+'<small>Passe o mouse (ou toque) num trecho da barra para ver a manobra ou o descanso. Fim da manobra = início + T da tabela + lancha até a Atalaia. Fora da comparação: dentro do ciclo, emendado, antes da 1ª manobra e em andamento.</small>';
 document.getElementById('relin').innerHTML=h;document.getElementById('relbox').style.display='block';}}
 document.addEventListener('click',function(e){{var t=e.target.closest('.relx');if(!t||e.target.closest('.obsx'))return;abrirRel(t.dataset.p,t.dataset.d);}});
 </script>
