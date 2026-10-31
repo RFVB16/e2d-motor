@@ -529,9 +529,13 @@ def montar_relatorio(manobras):
 
     def fim(dt, de, para): return _fim_b_efetivo(dt, de, para)
     _ler_canceladas()
-    def calc(lst, ini, fimw):
+    def calc(lst, ini, fimw, ant=None):
+        """ant = última manobra do prático antes do turno, quando ele estava de serviço no dia anterior
+        (sem folga no meio): o 1º descanso conta a partir dela, como no Δt da pauta (31/10/2026)."""
         lst = sorted(lst, key=lambda z: z[0]); use = [z for z in lst if z[0] <= corte]
         gaps = []; prev = ini; prevlab = f'{ini:%H:%M}'; prevab = ''; prim = True
+        if ant is not None:
+            prev = ant[1]; prevlab = ant[2][:11]; prevab = ant[3]; prim = False
         H0 = pd.Timedelta(0)   # 31/10/2026: descanso até o INÍCIO da manobra seguinte (sem a 1 h de acionamento), como na pauta
         for dt, end, lab, ab in use:
             lab = lab[:11] + (' (cancelada)' if ab == 'X' else '')   # descansos: só data e hora (sem navio e berço)
@@ -570,6 +574,10 @@ def montar_relatorio(manobras):
                           maior_longo=max(lon) if lon else 0, total_longo=sum(lon), total_ciclo=sum(cic), n_ciclo=len(cic))
 
     hoje = od(datetime.now()); D = {}; I = {}
+    _ESC_DIA = {}   # dia operacional -> práticos de serviço (D1/D2 de cada turno)
+    for _t in TT:
+        _ESC_DIA.setdefault(od(_t['dt_ini']), set()).update(_t['dia1'])
+        _ESC_DIA.setdefault(od(_t['dt_d2']), set()).update(_t['dia2'])
     _INT = {'e2d': [], 'e12': []}   # (dia operacional, minutos) de todos os práticos, para a linha do dia
     for t in TT:
         if not (pd.Timestamp(hoje) - pd.Timedelta(days=4) <= t['dt_ini'] <= pd.Timestamp(hoje) + pd.Timedelta(days=2)): continue
@@ -592,7 +600,17 @@ def montar_relatorio(manobras):
                 for cp, cab in cl:
                     if cp == p and ini <= cd < fimw:
                         l2.append((cd, cd, f"{cd:%d/%m %H:%M} {cv[:18]} (cancelada)", 'X'))   # X = cancelada: não conta como manobra
-            g12, s12 = calc(l12, ini, fimw); g2, s2 = calc(l2, ini, fimw)
+            # trabalhou no dia anterior ao turno (sem folga)? então o 1º descanso vem da última manobra dele
+            _ontem = (pd.Timestamp(od(ini)) - pd.Timedelta(days=1)).date()
+            a2 = a12 = None
+            if p in _ESC_DIA.get(_ontem, set()):
+                _p2 = [(dt, fim(dt, m['de'], m['para']), f"{dt:%d/%m %H:%M}", str(m.get('ab', '')).strip().upper()[:1])
+                       for dt, x, m in e2 if x == p and ini - pd.Timedelta(hours=36) <= dt < ini]
+                if _p2: a2 = max(_p2, key=lambda z: z[0])
+                _p12 = [(r['dt'], fim(r['dt'], r['From'], r['To']), f"{r['dt']:%d/%m %H:%M}", '')
+                        for _, r in reg[(reg['P'] == p) & (reg['dt'] >= ini - pd.Timedelta(hours=36)) & (reg['dt'] < ini)].iterrows()]
+                if _p12: a12 = max(_p12, key=lambda z: z[0])
+            g12, s12 = calc(l12, ini, fimw, a12); g2, s2 = calc(l2, ini, fimw, a2)
             # comparação (31/10/2026): descansos longos da E2D (da B até a A) × TODOS os intervalos da E12
             # (na E12 todo intervalo é descanso: a vez volta a cada 12). Só intervalos completos entre duas manobras.
             _l2 = [g[2] for g in g2 if g[3] == 'longo' and g[6]]
@@ -606,7 +624,7 @@ def montar_relatorio(manobras):
             def _seg(L, gaps):
                 ms = [[int(pd.Timestamp(max(ini, dt)).value // 10**6), int(pd.Timestamp(min(end, lim_b)).value // 10**6), ab, lab]
                       for dt, end, lab, ab in sorted(L, key=lambda z: z[0]) if dt <= corte and ab != 'X']
-                gs = [[int(pd.Timestamp(g[4]).value // 10**6), int(pd.Timestamp(min(g[5], lim_b)).value // 10**6), round(g[2]),
+                gs = [[int(pd.Timestamp(max(g[4], ini)).value // 10**6), int(pd.Timestamp(min(g[5], lim_b)).value // 10**6), round(g[2]),
                        'andamento' if g[7] else ('emendado' if g[3] == 'ciclo' and g[2] < 0 else g[3])] for g in gaps if g[4] < lim_b]
                 return ms, gs
             sb2 = _seg(l2, g2); sb12 = _seg(l12, g12)

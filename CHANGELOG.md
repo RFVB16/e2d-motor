@@ -1,6 +1,7 @@
 # Histórico de versões
 
 ## 31/10/2026
+- **Relatório, correção:** quando o prático estava de serviço no dia anterior ao turno (sem folga), o 1º descanso conta a partir da última manobra dele, como no Δt da pauta (ex.: AD, CARDIFF 30/10 09:00, 20h22). Antes aparecia só "antes da 1ª manobra" (06).
 - **Painel, descanso padronizado:** o Δt da A na pauta (amarelo) e o relatório usam o mesmo critério: do **fim** da manobra anterior (início + T + lancha até a Atalaia) até o **início** da manobra seguinte, sem descontar a 1 h de acionamento (decisão da Praticagem). Na B o Δt continua entre inícios (06).
 - **Painel, relatório por prático refeito:** compara o descanso longo da E2D (da B até a A) com **todos** os intervalos da E12 real (na E12 todo intervalo é descanso); linha do dia com todos os práticos (descanso típico e % abaixo de 5 h); **linha do tempo** comparando as duas escalas no turno; intervalos marcados como descanso longo, dentro do ciclo, emendado, antes da 1ª manobra e em andamento (os quatro últimos fora da comparação). Saem "maior descanso", "descanso útil total" e as tabelas de manobras e intervalos: a linha do tempo mostra tudo (passar o mouse ou tocar num trecho mostra a manobra ou o descanso) (06).
 - **Painel, correção:** em navio de 2 práticos o Δt da A agora fica amarelo também quando o Δt do outro prático está em branco (antes, com uma parte só, o destaque se perdia) (06).
