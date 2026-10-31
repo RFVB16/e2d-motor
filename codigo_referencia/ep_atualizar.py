@@ -1337,12 +1337,17 @@ COR_TEXT = {
 }
 
 
-def _dt_html(cal, ab):
+def _dt_html(cal, ab, abp=None):
     """Coluna Δt: o Δt da manobra A é o descanso longo -> negrito amarelo com contorno preto (pedido do Rodrigo, 29/10/2026).
-    Navio de 2 práticos ('ON 3h00 / BR 1h30' com A/B 'A/B'): destaca só a parte de quem está em A."""
+    Navio de 2 práticos ('ON 3h00 / BR 1h30' com A/B 'A/B'): destaca só a parte de quem está em A.
+    abp = {prático: 'A'/'B'}: cada parte começa pelo bigrama, então vale mesmo quando o Δt de um deles está em branco
+    e só sobra uma parte (correção de 31/10/2026)."""
     import html as _h
     cal = str(cal or ''); ab = str(ab or '').upper()
     partes = cal.split(' / '); abs_ = [x.strip() for x in ab.split('/')]
+    if abp and cal.strip() and all(t.strip().split(' ')[0] in abp for t in partes):
+        return ' / '.join(f'<b class="dl-a">{_h.escape(t)}</b>' if str(abp.get(t.strip().split(' ')[0], '')).upper() == 'A'
+                          else _h.escape(t) for t in partes)
     if len(partes) == len(abs_) and len(partes) > 1:
         return ' / '.join(f'<b class="dl-a">{_h.escape(t)}</b>' if a == 'A' and t.strip() else _h.escape(t)
                           for t, a in zip(partes, abs_))
@@ -1922,6 +1927,9 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
                 partes = m_ant.get('_dl_partes') or [(p1.split('/')[0].strip(), str(m_ant.get('proxima', '')).strip())]
                 partes.append((p2, str(m.get('proxima', '')).strip()))
                 m_ant['_dl_partes'] = partes
+                # status de cada prático, para o amarelo do Δt da A (mesmo quando o Δt de um deles está em branco)
+                _abp = m_ant.get('_abp') or {p1.split('/')[0].strip(): ab1}
+                _abp[p2] = ab2; m_ant['_abp'] = _abp
                 m_ant['proxima'] = ' / '.join(f'{pp} {vv}' for pp, vv in partes if vv)
                 # Mantem escalacao do primeiro (geralmente igual no segundo)
                 continue
@@ -2041,7 +2049,7 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
           <td class="calado">{_html.escape(str(m.get('calado', '') or ''))}</td>
           <td class="brd">{_html.escape(str(m.get('bordo', '') or ''))}</td>
           <td class="{ab_cl}{' relx' if _relp else ''}"{_rela}>{ab_e}</td>
-          <td class="cal">{_dt_html(cal, ab)}</td>
+          <td class="cal">{_dt_html(cal, ab, m.get('_abp'))}</td>
           <td class="esc esc-col">{esc_e}</td>
         </tr>'''
 
@@ -2072,6 +2080,9 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
                 partes = m_ant.get('_dl_partes') or [(p1.split('/')[0].strip(), str(m_ant.get('proxima', '')).strip())]
                 partes.append((p2, str(m.get('proxima', '')).strip()))
                 m_ant['_dl_partes'] = partes
+                # status de cada prático, para o amarelo do Δt da A (mesmo quando o Δt de um deles está em branco)
+                _abp = m_ant.get('_abp') or {p1.split('/')[0].strip(): ab1}
+                _abp[p2] = ab2; m_ant['_abp'] = _abp
                 m_ant['proxima'] = ' / '.join(f'{pp} {vv}' for pp, vv in partes if vv)
                 continue
             else:
@@ -2109,7 +2120,7 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
           <td class="dt">{dt_s}</td>
           <td class="ep">{ep_e}</td>
           <td class="{ab_cl}">{ab_e}</td>
-          <td class="cal">{_dt_html(cal, ab)}</td>
+          <td class="cal">{_dt_html(cal, ab, m.get('_abp'))}</td>
         </tr>'''
 
     if not hist_html:

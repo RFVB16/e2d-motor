@@ -1,6 +1,7 @@
 # Histórico de versões
 
 ## 31/10/2026
+- **Painel, correção:** em navio de 2 práticos o Δt da A agora fica amarelo também quando o Δt do outro prático está em branco (antes, com uma parte só, o destaque se perdia) (06).
 - **Painel, ⚠ "Escalado ainda em manobra":** aparece sempre que, na escalação (1 h antes), a manobra anterior do mesmo prático ainda não terminou pelo T, em A ou B (antes: "Escalado ainda a bordo", só na B e com mais de 30 min pela frente) (06).
 
 ## 29/10/2026
