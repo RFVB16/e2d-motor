@@ -496,7 +496,7 @@ def ler_planilha():
 
 
 # ── Relatório por prático: E12 real × E2D no turno (descanso útil, mesmo critério nas duas) ──
-_REL = {'d': {}, 'i': {}}
+_REL = {'d': {}, 'i': {}, 'dia': {}}
 
 def montar_relatorio(manobras):
     """Para cada prático regular em serviço perto de hoje: manobras e descanso útil no turno, E12 real × E2D.
@@ -537,16 +537,19 @@ def montar_relatorio(manobras):
             g = (dt - H - prev).total_seconds() / 60
             if prim:   # das 07:30 até o 1º acionamento (1 h antes da 1ª manobra): não é descanso longo (29/10/2026)
                 if g > 0:
-                    gaps.append((prevlab, f'1º acionamento {dt - H:%d/%m %H:%M}', g, 'inicio'))
+                    gaps.append((prevlab, f'1º acionamento {dt - H:%d/%m %H:%M}', g, 'inicio', prev, dt - H, False))
             else:
-                gaps.append((prevlab, lab, g, 'canc' if prevab == 'X' else ('ciclo' if prevab == 'A' else 'longo')))
+                gaps.append((prevlab, lab, g, 'canc' if prevab == 'X' else ('ciclo' if prevab == 'A' else 'longo'), prev, dt - H, True))
             prev = end; prevlab = lab; prevab = ab; prim = False
         fechado = fimw <= corte
         prox = [z[0] for z in lst if z[0] > corte]
         lim = min([fimw, corte] + [prox[0] - H] if prox else [fimw, corte])
         g = (lim - prev).total_seconds() / 60
         if g > 0:
-            gaps.append((prevlab, 'fim do serviço' if lim == fimw else ('acionamento ' + f'{prox[0]:%d/%m %H:%M}' if prox and lim == prox[0] - H else f'{corte:%d/%m %H:%M} (em andamento)'), g, 'inicio' if prim else ('canc' if prevab == 'X' else ('ciclo' if (prevab == 'A' and lim != fimw) else 'longo'))))
+            _acn = bool(prox) and lim == prox[0] - H   # termina no acionamento da próxima: intervalo completo
+            gaps.append((prevlab, 'fim do serviço' if lim == fimw else ('acionamento ' + f'{prox[0]:%d/%m %H:%M}' if _acn else f'{corte:%d/%m %H:%M} (em andamento)'), g,
+                         'inicio' if prim else ('canc' if prevab == 'X' else ('ciclo' if (prevab == 'A' and lim != fimw) else 'longo')),
+                         prev, lim, (not prim) and _acn, (not prim) and lim != fimw and not _acn))
         # madrugada (0h–5h): da saída à volta da Atalaia, unindo se < 2 h em terra
         per = []
         for dt, end, _, _ in use:
@@ -559,12 +562,14 @@ def montar_relatorio(manobras):
                 lo, hi = max(a, d), min(b, d + pd.Timedelta(hours=5))
                 if hi > lo: mad += (hi - lo).total_seconds() / 60
                 d += pd.Timedelta(days=1)
+        gaps = [tuple(g) + (False,) * (8 - len(g)) for g in gaps]   # (de, até, min, tipo, início, fim, entre duas manobras, em andamento)
         vals = [max(g[2], 0) for g in gaps]
         lon = [max(g[2], 0) for g in gaps if g[3] == 'longo']; cic = [max(g[2], 0) for g in gaps if g[3] == 'ciclo']
         return gaps, dict(n=sum(1 for z in use if z[3] != 'X'), maior=max(vals) if vals else 0, total=sum(vals), mad=mad, fechado=fechado,
                           maior_longo=max(lon) if lon else 0, total_longo=sum(lon), total_ciclo=sum(cic), n_ciclo=len(cic))
 
     hoje = od(datetime.now()); D = {}; I = {}
+    _INT = {'e2d': [], 'e12': []}   # (dia operacional, minutos) de todos os práticos, para a linha do dia
     for t in TT:
         if not (pd.Timestamp(hoje) - pd.Timedelta(days=4) <= t['dt_ini'] <= pd.Timestamp(hoje) + pd.Timedelta(days=2)): continue
         for p in set(t['dia1']) | set(t['dia2']):
@@ -587,10 +592,40 @@ def montar_relatorio(manobras):
                     if cp == p and ini <= cd < fimw:
                         l2.append((cd, cd, f"{cd:%d/%m %H:%M} {cv[:18]} (cancelada)", 'X'))   # X = cancelada: não conta como manobra
             g12, s12 = calc(l12, ini, fimw); g2, s2 = calc(l2, ini, fimw)
+            # comparação (31/10/2026): descansos longos da E2D (da B até a A) × TODOS os intervalos da E12
+            # (na E12 todo intervalo é descanso: a vez volta a cada 12). Só intervalos completos entre duas manobras.
+            _l2 = [g[2] for g in g2 if g[3] == 'longo' and g[6]]
+            _l12 = [g[2] for g in g12 if g[6]]
+            _med = lambda v: float(pd.Series(v).median()) if v else None
+            for _g, _lst in ((g2, _INT['e2d']), (g12, _INT['e12'])):
+                for g in _g:
+                    if g[6] and (_g is g12 or g[3] == 'longo'):
+                        _lst.append((od(g[5] + H), g[2]))
+            lim_b = min(fimw, corte)
+            def _seg(L, gaps):
+                ms = [[int(pd.Timestamp(max(ini, dt - H)).value // 10**6), int(pd.Timestamp(min(end, lim_b)).value // 10**6), ab]
+                      for dt, end, lab, ab in sorted(L, key=lambda z: z[0]) if dt <= corte and ab != 'X']
+                gs = [[int(pd.Timestamp(g[4]).value // 10**6), int(pd.Timestamp(min(g[5], lim_b)).value // 10**6), round(g[2]),
+                       'andamento' if g[7] else ('emendado' if g[3] == 'ciclo' and g[2] < 0 else g[3])] for g in gaps if g[4] < lim_b]
+                return ms, gs
+            sb2 = _seg(l2, g2); sb12 = _seg(l12, g12)
             fmt = lambda L: [dict(t=lab, f='' if ab == 'X' else f'{end:%H:%M}', fut=bool(dt > corte), ab='' if ab == 'X' else ab) for dt, end, lab, ab in sorted(L, key=lambda z: z[0])]
             D[key] = dict(p=p, ini=f'{ini:%d/%m %H:%M}', fim=f'{fimw:%d/%m %H:%M}', corte=f'{corte:%d/%m %H:%M}',
                           m12=fmt(l12), m2=fmt(l2),
-                          g12=[[x, y, round(z), w if w in ('inicio', 'canc') else ''] for x, y, z, w in g12], g2=[[x, y, round(z), w] for x, y, z, w in g2], s12=s12, s2=s2)
+                          g12=[[g[0], g[1], round(g[2]), 'andamento' if g[7] else (g[3] if g[3] in ('inicio', 'canc') else '')] for g in g12],
+                          g2=[[g[0], g[1], round(g[2]), 'andamento' if g[7] else ('emendado' if g[3] == 'ciclo' and g[2] < 0 else g[3])] for g in g2],
+                          s12=s12, s2=s2,
+                          c2=dict(med=_med(_l2), n=len(_l2), lt5=sum(1 for v in _l2 if v < 300)),
+                          c12=dict(med=_med(_l12), n=len(_l12), lt5=sum(1 for v in _l12 if v < 300)),
+                          b0=int(pd.Timestamp(ini).value // 10**6), b1=int(pd.Timestamp(lim_b).value // 10**6),
+                          b2=sb2, b12=sb12, d1=f'{od(ini)}', d2=f'{od(dias[-1])}')
+    # linha do dia (todos os práticos): descanso longo típico da E2D × intervalo típico da E12, e % abaixo de 5 h
+    DIA = {}
+    for k in ('e2d', 'e12'):
+        for d_, v in _INT[k]:
+            DIA.setdefault(str(d_), {}).setdefault(k, []).append(v)
+    _REL['dia'] = {d_: {k: dict(med=float(pd.Series(v).median()), n=len(v), lt5=round(100 * sum(1 for x in v if x < 300) / len(v)))
+                        for k, v in x.items()} for d_, x in DIA.items()}
     _REL['d'], _REL['i'] = D, I
     print(f'[Relatório] {len(D)} turnos de práticos preparados (E12 com nome até {corte:%d/%m %H:%M})')
 
@@ -2219,7 +2254,12 @@ body {{ font-family: "Segoe UI", Arial, sans-serif; font-size: 12px; background:
 .invi {{ background: #ffff00; color: #c00000; font-weight: 700; font-size: 10px; padding: 0 2px; }}
 .relx {{ cursor: pointer; text-decoration: underline dotted; }}
 #relbox .tg {{ font-size:10px; padding:0 4px; border-radius:3px; color:#fff; }} #relbox .tl {{ background:#2e7d32; }} #relbox .tc {{ background:#8d6e00; }}
-#relbox tr.cic td {{ background:#fff8e1; }}
+#relbox tr.cic td {{ background:#fff8e1; color:#555; }}
+#relbox .te {{ background:#555; }} #relbox .ta {{ background:#7cc47f; color:#000; }} #relbox .ti {{ background:#999; }}
+#relbox .dia {{ background:#eaf3ea; border:1px solid #9cc79c; border-radius:4px; padding:5px 8px; margin:6px 0; }}
+#relbox .barra {{ margin:4px 0 0; }} #relbox .barra svg {{ display:block; width:100%; height:auto; }}
+#relbox .leg {{ font-size:10px; color:#333; margin:0 0 8px; line-height:1.6; }} #relbox .leg span {{ display:inline-block; width:10px; height:10px; margin:0 3px 0 7px; vertical-align:-1px; }}
+#relbox .big {{ font-size:16px; font-weight:700; }} #relbox .ok {{ color:#2e7d32; }}
 #relbox {{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:100; }}
 #relbox .in {{ background:#fff; color:#000; max-width:760px; margin:4vh auto; max-height:90vh; overflow:auto; padding:12px 14px; border-radius:6px; font-size:12px; }}
 #relbox table {{ border-collapse:collapse; width:100%; margin:4px 0 8px; }}
@@ -2358,18 +2398,39 @@ document.addEventListener('DOMContentLoaded',function(){{try{{if(localStorage.ge
 var REL = __RELJSON__;
 function _h(m){{m=Math.round(m);var s=m<0?'-':'';m=Math.abs(m);return s+Math.floor(m/60)+'h'+String(m%60).padStart(2,'0');}}
 function _lista(L){{if(!L.length)return '<tr><td>nenhuma</td></tr>';return L.map(function(x){{return '<tr class="'+(x.fut?'fut':'')+'"><td>'+(x.ab?'<b>'+x.ab+'</b> ':'')+x.t+'</td><td>'+x.f+'</td></tr>';}}).join('');}}
-function _gaps(G){{if(!G.length)return '<tr><td colspan=2>—</td></tr>';return G.map(function(g){{var tg=g[3]==='longo'?'<span class="tg tl">descanso longo</span> ':(g[3]==='ciclo'?'<span class="tg tc">entre A e B</span> ':'');return '<tr'+(g[3]==='ciclo'?' class="cic"':'')+'><td>'+tg+g[0]+' → '+g[1]+'</td><td class="'+(g[2]<0?'neg':'')+'">'+_h(g[2])+'</td></tr>';}}).join('');}}
+function _gaps(G){{if(!G.length)return '<tr><td colspan=2>—</td></tr>';var nm={{longo:['tl','descanso longo'],ciclo:['tc','dentro do ciclo'],emendado:['te','emendado'],andamento:['ta','em andamento'],inicio:['ti','antes da 1ª'],canc:['ti','após cancelada']}};return G.map(function(g){{var t=g[3],z=nm[t],tg=z?'<span class="tg '+z[0]+'">'+z[1]+'</span> ':'';var fora=(t!=='longo'&&t!=='');return '<tr'+(fora?' class="cic"':'')+'><td>'+tg+g[0]+' → '+g[1]+'</td><td>'+(t==='emendado'?'—':_h(g[2]))+'</td></tr>';}}).join('');}}
+function _hm(t){{var d=new Date(t);return String(d.getUTCHours()).padStart(2,'0')+':'+String(d.getUTCMinutes()).padStart(2,'0');}}
+function _barra(r){{var W=700,X=function(t){{return (t-r.b0)/Math.max(1,(r.b1-r.b0))*W;}};
+function rc(v){{return v>=480?'#2e7d32':(v>=300?'#ef8f00':'#c62828');}}
+function linha(B,y){{var ms=B[0],gs=B[1],o='';gs.forEach(function(g){{var t=g[3],c;if(t==='emendado')return;
+if(t==='inicio'||t==='canc')c='#d9d9d9';else if(t==='andamento')c='#7cc47f';else if(t==='ciclo')c='#f3d36b';else c=rc(g[2]);
+var a=X(g[0]),b=X(g[1]);if(b-a<0.5)return;
+o+='<rect x="'+a.toFixed(1)+'" y="'+y+'" width="'+(b-a).toFixed(1)+'" height="24" fill="'+c+'"><title>'+_hm(g[0])+' → '+_hm(g[1])+' · '+_h(g[2])+'</title></rect>';
+if(b-a>38&&t!=='ciclo'&&t!=='inicio'&&t!=='canc')o+='<text x="'+((a+b)/2).toFixed(1)+'" y="'+(y+16)+'" text-anchor="middle" font-size="11" fill="'+(t==='andamento'?'#000':'#fff')+'">'+_h(g[2])+(t==='andamento'?'…':'')+'</text>';}});
+var fa=null;ms.forEach(function(m){{var a=X(m[0]),b=X(m[1]),em=false;if(fa!==null&&a<fa){{a=fa;em=true;}}if(b<a+3)b=a+3;
+o+='<rect x="'+a.toFixed(1)+'" y="'+y+'" width="'+(b-a).toFixed(1)+'" height="24" fill="#1f3a5f" stroke="#fff" stroke-width="1"><title>manobra: acionamento '+_hm(m[0])+' · fim '+_hm(m[1])+'</title></rect>';
+if(m[2]&&b-a>11)o+='<text x="'+((a+b)/2).toFixed(1)+'" y="'+(y+16)+'" text-anchor="middle" font-size="11" fill="#fff">'+m[2]+'</text>';
+if(em)o+='<path d="M'+(a-3).toFixed(1)+' '+(y-5)+' l6 0 l-3 5 z" fill="#c62828"><title>emendada: acionada antes do fim da anterior</title></path>';fa=b;}});return o;}}
+var tk='';for(var t=r.b0;t<=r.b1+60000;t+=3*3600000){{var x=X(t),an=x<12?'start':(x>W-12?'end':'middle');tk+='<line x1="'+x.toFixed(1)+'" y1="6" x2="'+x.toFixed(1)+'" y2="66" stroke="#bbb" stroke-dasharray="2,3"/><text x="'+x.toFixed(1)+'" y="78" font-size="10" text-anchor="'+an+'" fill="#555">'+_hm(t)+'</text>';}}
+var dv='';if(r.d2!==r.d1){{var xd=X(r.b0+86400000);if(xd>0&&xd<W)dv='<line x1="'+xd.toFixed(1)+'" y1="4" x2="'+xd.toFixed(1)+'" y2="68" stroke="#000" stroke-width="1.5"/>';}}
+return '<div class="barra"><svg viewBox="-40 0 '+(W+48)+' 84" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Arial">'+tk+
+'<text x="-6" y="24" text-anchor="end" font-size="12" font-weight="600">E2D</text>'+linha(r.b2,8)+
+'<text x="-6" y="56" text-anchor="end" font-size="12" font-weight="600">E12</text>'+linha(r.b12,40)+dv+'</svg></div>'+
+'<div class="leg"><span style="background:#1f3a5f"></span>manobra (acionamento → fim + lancha)<span style="background:#2e7d32"></span>descanso ≥ 8 h<span style="background:#ef8f00"></span>5–8 h<span style="background:#c62828"></span>&lt; 5 h<span style="background:#f3d36b"></span>dentro do ciclo (A→B)<span style="background:#7cc47f"></span>em andamento<span style="background:#d9d9d9"></span>antes da 1ª manobra<span style="background:#c62828;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:6px solid #c62828;background:none"></span>emendada</div>';}}
 function fecharRel(){{document.getElementById('relbox').style.display='none';}}
 function abrirRel(p,d){{var k=REL.i[p+'|'+d],r=k&&REL.d[k];if(!r){{document.getElementById('relin').innerHTML='<span class="x" onclick="fecharRel()">×</span>Sem relatório para '+p+' neste dia (fora do turno atual).';document.getElementById('relbox').style.display='block';return;}}
-var a=r.s12,b=r.s2,row=function(n,x,y,f){{return '<tr><td>'+n+'</td><td>'+f(x)+'</td><td>'+f(y)+'</td></tr>';}},id=function(v){{return v;}};
+var a=r.s12,b=r.s2,M=function(v){{return v===null||v===undefined?'—':_h(v);}};
+var dias='';[r.d1,r.d2].filter(function(x,i,arr){{return arr.indexOf(x)===i;}}).forEach(function(dd){{var z=REL.dia[dd];if(z&&z.e2d&&z.e12)dias+='<div class="dia"><b>Dia '+dd.slice(8,10)+'/'+dd.slice(5,7)+', todos os práticos:</b> descanso longo típico da E2D <b>'+_h(z.e2d.med)+'</b> × intervalo típico da E12 <b>'+_h(z.e12.med)+'</b> · abaixo de 5 h: E2D '+z.e2d.lt5+'% × E12 '+z.e12.lt5+'%</div>';}});
+var row=function(n,x,y){{return '<tr><td>'+n+'</td><td>'+x+'</td><td>'+y+'</td></tr>';}};
 var h='<span class="x" onclick="fecharRel()">×</span>'+
-'<b>'+r.p+' · turno '+r.ini+' → '+r.fim+'</b><br>Descanso útil = do fim da manobra (início + T + lancha até a Atalaia) até 1 h antes do início da seguinte; mesmo critério nas duas escalas. Inclui das 07:30 até o 1º acionamento (1 h antes da 1ª manobra; não conta como descanso longo) e, se o turno já terminou, do fim da última até o fim do serviço.'+
-'<table><tr><th></th><th>E12 (real)</th><th>E2D</th></tr>'+row('Manobras',a.n,b.n,id)+row('Maior descanso útil',a.maior,b.maior,_h)+row('Descanso útil total',a.total,b.total,_h)+row('Trabalho na madrugada (0h–5h)',a.mad,b.mad,_h)+'</table>'+
-'<b>Só E2D</b>: descanso longo (depois da B até a próxima A) — maior '+_h(b.maior_longo)+', total '+_h(b.total_longo)+' · intervalos entre A e B (dentro do ciclo): '+b.n_ciclo+', total '+_h(b.total_ciclo)+'.<br>'+
-(a.fechado?'':'<i>Comparação até '+r.corte+': depois disso a E12 ainda não tem nome. Manobras da E2D após esse horário aparecem em cinza e não entram na conta.</i>')+
-'<div class="cols"><div><b>E12 — manobras</b><table><tr><th>Início · navio</th><th>Fim*</th></tr>'+_lista(r.m12)+'</table><b>E12 — descansos úteis</b><table>'+_gaps(r.g12)+'</table></div>'+
-'<div><b>E2D — manobras</b><table><tr><th>Início · navio</th><th>Fim*</th></tr>'+_lista(r.m2)+'</table><b>E2D — descansos úteis</b><table>'+_gaps(r.g2)+'</table></div></div>'+
-'<small>* Fim = início + T da tabela + lancha até a Atalaia.</small>';
+'<b>'+r.p+' · turno '+r.ini+' → '+r.fim+'</b><br><small>'+(a.fechado?'':'Comparação até '+r.corte+' (depois disso a E12 ainda não tem nome). ')+'Descanso = do fim da manobra (início + T + lancha até a Atalaia) até o acionamento da seguinte (1 h antes). Na E2D vale o descanso longo (da B até a A); na E12, todos os intervalos (a vez volta a cada 12).</small>'+dias+
+'<table><tr><th></th><th>E2D (descanso longo, da B até a A)</th><th>E12 real (todos os intervalos)</th></tr>'+
+row('Descanso típico','<span class="big ok">'+M(r.c2.med)+'</span>','<span class="big">'+M(r.c12.med)+'</span>')+
+row('Quantos',r.c2.n,r.c12.n)+row('Abaixo de 5 h',r.c2.lt5,r.c12.lt5)+row('Manobras',b.n,a.n)+row('Trabalho na madrugada (0h–5h)',_h(b.mad),_h(a.mad))+'</table>'+
+'<b>Linha do tempo do turno</b>'+_barra(r)+
+'<div class="cols"><div><b>E2D — manobras</b><table><tr><th>Início · navio</th><th>Fim*</th></tr>'+_lista(r.m2)+'</table><b>E2D — intervalos</b><table>'+_gaps(r.g2)+'</table></div>'+
+'<div><b>E12 real — manobras</b><table><tr><th>Início · navio</th><th>Fim*</th></tr>'+_lista(r.m12)+'</table><b>E12 real — intervalos (todos)</b><table>'+_gaps(r.g12)+'</table></div></div>'+
+'<small>* Fim = início + T da tabela + lancha até a Atalaia. Fora da comparação (fundo amarelo): dentro do ciclo, emendado, antes da 1ª manobra, em andamento. Manobras da E2D depois de '+r.corte+' em cinza.</small>';
 document.getElementById('relin').innerHTML=h;document.getElementById('relbox').style.display='block';}}
 document.addEventListener('click',function(e){{var t=e.target.closest('.relx');if(!t||e.target.closest('.obsx'))return;abrirRel(t.dataset.p,t.dataset.d);}});
 </script>
