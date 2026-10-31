@@ -625,7 +625,8 @@ def montar_relatorio(manobras):
                 ms = [[int(pd.Timestamp(max(ini, dt)).value // 10**6), int(pd.Timestamp(min(end, lim_b)).value // 10**6), ab, lab]
                       for dt, end, lab, ab in sorted(L, key=lambda z: z[0]) if dt <= corte and ab != 'X']
                 gs = [[int(pd.Timestamp(max(g[4], ini)).value // 10**6), int(pd.Timestamp(min(g[5], lim_b)).value // 10**6), round(g[2]),
-                       'andamento' if g[7] else ('emendado' if g[3] == 'ciclo' and g[2] < 0 else g[3])] for g in gaps if g[4] < lim_b]
+                       'andamento' if g[7] else ('emendado' if g[3] == 'ciclo' and g[2] < 0 else g[3]),
+                       f'{g[4]:%d/%m %H:%M}' if g[4] < ini else ''] for g in gaps if g[4] < lim_b]
                 return ms, gs
             sb2 = _seg(l2, g2); sb12 = _seg(l12, g12)
             fmt = lambda L: [dict(t=lab, f='' if ab == 'X' else f'{end:%H:%M}', fut=bool(dt > corte), ab='' if ab == 'X' else ab) for dt, end, lab, ab in sorted(L, key=lambda z: z[0])]
@@ -2427,8 +2428,9 @@ function rc(v){{return v>=480?'#2e7d32':(v>=300?'#ef8f00':'#c62828');}}
 function linha(B,y){{var ms=B[0],gs=B[1],o='';gs.forEach(function(g){{var t=g[3],c;if(t==='emendado')return;
 if(t==='inicio'||t==='canc')c='#d9d9d9';else if(t==='andamento')c='#7cc47f';else if(t==='ciclo')c='#f3d36b';else c=rc(g[2]);
 var a=X(g[0]),b=X(g[1]);if(b-a<0.5)return;
-o+='<rect x="'+a.toFixed(1)+'" y="'+y+'" width="'+(b-a).toFixed(1)+'" height="24" fill="'+c+'"><title>'+_hm(g[0])+' → '+_hm(g[1])+' · '+_h(g[2])+'</title></rect>';
-if(b-a>38&&t!=='ciclo'&&t!=='inicio'&&t!=='canc')o+='<text x="'+((a+b)/2).toFixed(1)+'" y="'+(y+16)+'" text-anchor="middle" font-size="11" fill="'+(t==='andamento'?'#000':'#fff')+'">'+_h(g[2])+(t==='andamento'?'…':'')+'</text>';}});
+o+='<rect x="'+a.toFixed(1)+'" y="'+y+'" width="'+(b-a).toFixed(1)+'" height="24" fill="'+c+'"><title>'+(g[4]?'desde '+g[4]+' (última manobra antes do turno)':_hm(g[0]))+' → '+_hm(g[1])+' · '+_h(g[2])+'</title></rect>';
+if(g[4]&&b-a>18)o+='<text x="'+(a+2).toFixed(1)+'" y="'+(y+16)+'" font-size="10" fill="#fff">◂'+_h(g[2])+'<title>desde '+g[4]+'</title></text>';
+else if(b-a>38&&t!=='ciclo'&&t!=='inicio'&&t!=='canc')o+='<text x="'+((a+b)/2).toFixed(1)+'" y="'+(y+16)+'" text-anchor="middle" font-size="11" fill="'+(t==='andamento'?'#000':'#fff')+'">'+_h(g[2])+(t==='andamento'?'…':'')+'</text>';}});
 var fa=null;ms.forEach(function(m){{var a=X(m[0]),b=X(m[1]),em=false;if(fa!==null&&a<fa){{a=fa;em=true;}}if(b<a+3)b=a+3;
 o+='<rect x="'+a.toFixed(1)+'" y="'+y+'" width="'+(b-a).toFixed(1)+'" height="24" fill="#1f3a5f" stroke="#fff" stroke-width="1"><title>'+(m[2]?m[2]+' · ':'')+(m[3]||'')+' · início '+_hm(m[0])+' · fim '+_hm(m[1])+'</title></rect>';
 if(m[2]&&b-a>11)o+='<text x="'+((a+b)/2).toFixed(1)+'" y="'+(y+16)+'" text-anchor="middle" font-size="11" fill="#fff">'+m[2]+'</text>';
@@ -2438,7 +2440,7 @@ var dv='';if(r.d2!==r.d1){{var xd=X(r.b0+86400000);if(xd>0&&xd<W)dv='<line x1="'
 return '<div class="barra"><svg viewBox="-40 0 '+(W+48)+' 84" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Arial">'+tk+
 '<text x="-6" y="24" text-anchor="end" font-size="12" font-weight="600">E2D</text>'+linha(r.b2,8)+
 '<text x="-6" y="56" text-anchor="end" font-size="12" font-weight="600">E12</text>'+linha(r.b12,40)+dv+'</svg></div>'+
-'<div class="leg"><span style="background:#1f3a5f"></span>manobra (início → fim + lancha)<span style="background:#2e7d32"></span>descanso ≥ 8 h<span style="background:#ef8f00"></span>5–8 h<span style="background:#c62828"></span>&lt; 5 h<span style="background:#f3d36b"></span>dentro do ciclo (A→B)<span style="background:#7cc47f"></span>em andamento<span style="background:#d9d9d9"></span>antes da 1ª manobra<span style="background:#c62828;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:6px solid #c62828;background:none"></span>emendada</div>';}}
+'<div class="leg"><span style="background:#1f3a5f"></span>manobra (início → fim + lancha)<span style="background:#2e7d32"></span>descanso ≥ 8 h<span style="background:#ef8f00"></span>5–8 h<span style="background:#c62828"></span>&lt; 5 h<span style="background:#f3d36b"></span>dentro do ciclo (A→B)<span style="background:#7cc47f"></span>em andamento<span style="background:#d9d9d9"></span>antes da 1ª manobra · ◂ descanso que começou antes do turno<span style="background:#c62828;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:6px solid #c62828;background:none"></span>emendada</div>';}}
 function fecharRel(){{document.getElementById('relbox').style.display='none';}}
 function abrirRel(p,d){{var k=REL.i[p+'|'+d],r=k&&REL.d[k];if(!r){{document.getElementById('relin').innerHTML='<span class="x" onclick="fecharRel()">×</span>Sem relatório para '+p+' neste dia (fora do turno atual).';document.getElementById('relbox').style.display='block';return;}}
 var a=r.s12,b=r.s2,M=function(v){{return v===null||v===undefined?'—':_h(v);}};
