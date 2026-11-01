@@ -1,7 +1,7 @@
 # Histórico de versões
 
 ## 01/11/2026
-- **Relatório, barra:** no trecho amarelo (dentro do ciclo, A→B), quando o tempo livre na Atalaia é de 2 h ou mais, a barra mostra esse tempo — o mesmo Δt da B na pauta (06).
+- **Relatório, barra:** no trecho amarelo (dentro do ciclo, A→B), quando o tempo livre na Atalaia é de 2 h ou mais, a barra mostra esse tempo — o mesmo Δt da B na pauta; abaixo de 2 h mostra "<2h" (06).
 - **Relatório por prático = últimas 48 h** (até onde a E12 já tem nome), não mais por turno: com as trocas, o prático emenda dias em qualquer ordem (D2 + D1 etc.). Intervalo que atravessa um dia de folga (pela escala do dia) fica fora da comparação, em cinza; se não houve folga, o 1º descanso conta da última manobra antes das 48 h e a barra recua até ela. Linhas pretas = virada do dia (07:30). Linha do dia: ontem e hoje (06).
 
 ## 31/10/2026
