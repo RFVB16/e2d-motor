@@ -627,10 +627,10 @@ def montar_relatorio(manobras):
                 if g[6] and (_g is g12 or g[3] == 'longo'):
                     _lst.append((od(g[5]), g[2]))
         lim_b = W1
-        _b0 = min([ini] + [z[0] for z in (a2, a12) if z])   # a barra recua até a última manobra antes da janela (sem folga no meio)
+        _b0 = ini   # barra fixa: exatamente as 48 h   # a barra recua até a última manobra antes da janela (sem folga no meio)
         def _seg(L, gaps, ant):
             ms = [[int(pd.Timestamp(max(_b0, dt)).value // 10**6), int(pd.Timestamp(min(end, lim_b)).value // 10**6), ab, lab]
-                  for dt, end, lab, ab in sorted(L + ([ant] if ant else []), key=lambda z: z[0]) if dt <= corte and ab != 'X']
+                  for dt, end, lab, ab in sorted(L + ([ant] if ant else []), key=lambda z: z[0]) if dt <= corte and ab != 'X' and end > _b0]
             gs = [[int(pd.Timestamp(max(g[4], _b0)).value // 10**6), int(pd.Timestamp(min(g[5], lim_b)).value // 10**6), round(g[2]),
                    'andamento' if g[7] else ('emendado' if g[3] == 'ciclo' and g[2] < 0 else g[3]),
                    f'{g[4]:%d/%m %H:%M}' if g[4] < _b0 else '',
@@ -2447,7 +2447,6 @@ if(t==='inicio'||t==='canc'||t==='folga')c='#d9d9d9';else if(t==='andamento')c='
 var a=X(g[0]),b=X(g[1]);if(b-a<0.5)return;
 o+='<rect x="'+a.toFixed(1)+'" y="'+y+'" width="'+(b-a).toFixed(1)+'" height="24" fill="'+c+'"><title>'+(g[4]?'desde '+g[4]+' (última manobra antes do turno)':_hm(g[0]))+' → '+_hm(g[1])+' · '+_h(g[2])+(t==='ciclo'&&g[5]!==null?' · livre na Atalaia '+_h(Math.max(0,g[5])):'')+'</title></rect>';
 if(t==='ciclo'&&g[5]!==null&&g[5]>=120&&b-a>24)o+='<text x="'+((a+b)/2).toFixed(1)+'" y="'+(y+16)+'" text-anchor="middle" font-size="11" fill="#000">'+_h(Math.max(0,g[5]))+'<title>livre na Atalaia (o Δt da B na pauta)</title></text>';
-else if(t==='ciclo'&&g[5]!==null&&g[5]<120)lb+='<text x="'+((a+b)/2).toFixed(1)+'" y="'+(y+16)+'" text-anchor="middle" font-size="'+(b-a>16?10:8)+'" fill="#000" stroke="#f3d36b" stroke-width="3" paint-order="stroke">&lt;2h<title>livre na Atalaia: '+_h(Math.max(0,g[5]))+' (o Δt da B na pauta)</title></text>';
 else if(g[4]&&b-a>18)o+='<text x="'+(a+2).toFixed(1)+'" y="'+(y+16)+'" font-size="10" fill="#fff">◂'+_h(g[2])+'<title>desde '+g[4]+'</title></text>';
 else if(b-a>38&&t!=='ciclo'&&t!=='inicio'&&t!=='canc'&&t!=='folga')o+='<text x="'+((a+b)/2).toFixed(1)+'" y="'+(y+16)+'" text-anchor="middle" font-size="11" fill="'+(t==='andamento'?'#000':'#fff')+'">'+_h(g[2])+(t==='andamento'?'…':'')+'</text>';}});
 var fa=null;ms.forEach(function(m){{var a=X(m[0]),b=X(m[1]),em=false;if(fa!==null&&a<fa){{a=fa;em=true;}}if(b<a+3)b=a+3;
@@ -2459,7 +2458,7 @@ var dv='';(r.vd||[]).forEach(function(v,i){{var xd=X(v);if(xd>0.5&&xd<W)dv+='<li
 return '<div class="barra"><svg viewBox="-40 0 '+(W+48)+' 84" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Arial">'+tk+
 '<text x="-6" y="24" text-anchor="end" font-size="12" font-weight="600">E2D</text>'+linha(r.b2,8)+
 '<text x="-6" y="56" text-anchor="end" font-size="12" font-weight="600">E12</text>'+linha(r.b12,40)+dv+'</svg></div>'+
-'<div class="leg"><span style="background:#1f3a5f"></span>manobra (início → fim + lancha)<span style="background:#2e7d32"></span>descanso ≥ 8 h<span style="background:#ef8f00"></span>5–8 h<span style="background:#c62828"></span>&lt; 5 h<span style="background:#f3d36b"></span>dentro do ciclo (A→B; tempo livre na Atalaia, ou &lt;2h)<span style="background:#7cc47f"></span>em andamento<span style="background:#d9d9d9"></span>antes da 1ª manobra ou folga · linha preta: virada do dia, 07:30 (se não houve folga, a barra começa na última manobra antes das 48 h)<span style="background:#c62828;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:6px solid #c62828;background:none"></span>emendada</div>';}}
+'<div class="leg"><span style="background:#1f3a5f"></span>manobra (início → fim + lancha)<span style="background:#2e7d32"></span>descanso ≥ 8 h<span style="background:#ef8f00"></span>5–8 h<span style="background:#c62828"></span>&lt; 5 h<span style="background:#f3d36b"></span>dentro do ciclo (A→B; com 2 h ou mais livre na Atalaia, mostra o tempo)<span style="background:#7cc47f"></span>em andamento<span style="background:#d9d9d9"></span>antes da 1ª manobra ou folga · linha preta: virada do dia, 07:30 · ◂ descanso que começou antes das 48 h (número inteiro)<span style="background:#c62828;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:6px solid #c62828;background:none"></span>emendada</div>';}}
 function fecharRel(){{document.getElementById('relbox').style.display='none';}}
 function abrirRel(p,d){{var k=REL.i[p+'|'+d],r=k&&REL.d[k];if(!r){{document.getElementById('relin').innerHTML='<span class="x" onclick="fecharRel()">×</span>Sem relatório para '+p+': nenhuma manobra nas últimas 48 h.';document.getElementById('relbox').style.display='block';return;}}
 var a=r.s12,b=r.s2,M=function(v){{return v===null||v===undefined?'—':_h(v);}};
