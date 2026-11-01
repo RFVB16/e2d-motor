@@ -585,7 +585,7 @@ def montar_relatorio(manobras):
     _INT = {'e2d': [], 'e12': []}   # (dia operacional, minutos) de todos os práticos, para a linha do dia
     # 01/11/2026: relatório pelas ÚLTIMAS 48 h (até onde a E12 já tem nome), não mais por turno:
     # as trocas fazem o prático emendar dias em qualquer ordem. Intervalo que atravessa um dia de folga não conta.
-    W1 = corte; W0 = W1 - pd.Timedelta(hours=48)
+    W1 = corte; W0 = pd.Timestamp(od(W1)) - pd.Timedelta(days=1) + D0   # ontem 07:30 (para escolher os práticos e a linha do dia)
     def _deserv(p, a, b):   # p de serviço em todos os dias operacionais de a até b (sem folga no meio)?
         d = pd.Timestamp(od(a))
         while d.date() <= od(b):
@@ -596,8 +596,18 @@ def montar_relatorio(manobras):
     _dias_w = [od(W1) - pd.Timedelta(days=1), od(W1)]   # linha do dia: ontem (completo dentro das 48 h) e hoje
     for p in sorted(_pr):
         if p in ESPECIAIS or not p: continue
-        key = p; ini = W0; fimw = W1 + pd.Timedelta(seconds=1)
-        for k_ in range(-6, 2): I[f'{p}|{od(W1) + pd.Timedelta(days=k_)}'] = key
+        # 01/11/2026: dias seguidos de serviço até hoje (volta até a última folga, no máximo 8 dias = 4 turnos), uma barra por dia
+        _d = od(W1)
+        for _k in range(8):
+            if p in _ESC_DIA.get(_d, set()): break
+            _d = _d - pd.Timedelta(days=1)
+        _dfim = _d; _seq = []
+        while p in _ESC_DIA.get(_d, set()) and len(_seq) < 8:
+            _seq.insert(0, _d); _d = _d - pd.Timedelta(days=1)
+        if not _seq: _seq = [od(W1)]
+        key = p; ini = pd.Timestamp(_seq[0]) + D0
+        fimw = min(pd.Timestamp(_seq[-1]) + pd.Timedelta(days=1) + D0, W1 + pd.Timedelta(seconds=1))
+        for k_ in range(-8, 2): I[f'{p}|{od(W1) + pd.Timedelta(days=k_)}'] = key
         l12 = []
         for _, r in reg[(reg['P'] == p) & (reg['dt'] >= ini) & (reg['dt'] < fimw)].drop_duplicates(['dt', 'Vessel']).iterrows():
             l12.append((r['dt'], fim(r['dt'], r['From'], r['To']), f"{r['dt']:%d/%m %H:%M} {str(r['Vessel'])[:18]} ({_local_sp('', r['From'], r['To'])})", ''))
@@ -624,10 +634,10 @@ def montar_relatorio(manobras):
         _med = lambda v: float(pd.Series(v).median()) if v else None
         for _g, _lst in ((g2, _INT['e2d']), (g12, _INT['e12'])):
             for g in _g:
-                if g[6] and (_g is g12 or g[3] == 'longo'):
+                if g[6] and (_g is g12 or g[3] == 'longo') and od(g[5]) in _dias_w:
                     _lst.append((od(g[5]), g[2]))
-        lim_b = W1
-        _b0 = ini   # barra fixa: exatamente as 48 h   # a barra recua até a última manobra antes da janela (sem folga no meio)
+        lim_b = min(W1, fimw)
+        _b0 = ini   # barras: um dia por barra, de 07:30 a 07:30 (hoje: até agora)   # a barra recua até a última manobra antes da janela (sem folga no meio)
         def _seg(L, gaps, ant):
             ms = [[int(pd.Timestamp(max(_b0, dt)).value // 10**6), int(pd.Timestamp(min(end, lim_b)).value // 10**6), ab, lab]
                   for dt, end, lab, ab in sorted(L + ([ant] if ant else []), key=lambda z: z[0]) if dt <= corte and ab != 'X' and end > _b0]
@@ -641,14 +651,16 @@ def montar_relatorio(manobras):
         sb2 = _seg(l2, g2, a2); sb12 = _seg(l12, g12, a12)
         fmt = lambda L: [dict(t=lab, f='' if ab == 'X' else f'{end:%H:%M}', fut=bool(dt > corte), ab='' if ab == 'X' else ab) for dt, end, lab, ab in sorted(L, key=lambda z: z[0])]
         _vd = []; _t = pd.Timestamp(od(_b0)) + D0
-        while _t <= lim_b:
+        while _t <= _b0 + pd.Timedelta(hours=48):
             if _t > _b0: _vd.append(int(_t.value // 10**6))
             _t += pd.Timedelta(days=1)
-        D[key] = dict(p=p, ini=f'{ini:%d/%m %H:%M}', fim=f'{W1:%d/%m %H:%M}', corte=f'{corte:%d/%m %H:%M}',
+        D[key] = dict(p=p, ini=f'{ini:%d/%m %H:%M}', fim=f'{W1:%d/%m %H:%M}', fim2=f'{pd.Timestamp(_seq[-1]) + pd.Timedelta(days=1) + D0:%d/%m %H:%M}', nd=len(_seq), corte=f'{corte:%d/%m %H:%M}',
                       m12=fmt(l12), m2=fmt(l2), s12=s12, s2=s2,
                       c2=dict(med=_med(_l2), n=len(_l2), lt5=sum(1 for v in _l2 if v < 300)),
                       c12=dict(med=_med(_l12), n=len(_l12), lt5=sum(1 for v in _l12 if v < 300)),
-                      b0=int(pd.Timestamp(_b0).value // 10**6), b1=int(pd.Timestamp(lim_b).value // 10**6),
+                      b0=int(pd.Timestamp(_b0).value // 10**6), b1=int(pd.Timestamp(_b0 + pd.Timedelta(days=len(_seq))).value // 10**6), ag=int(pd.Timestamp(W1).value // 10**6),
+                      dd=[int((pd.Timestamp(x) + D0).value // 10**6) for x in _seq if pd.Timestamp(x) + pd.Timedelta(days=1) + D0 <= W1],   # dias já fechados
+                      hj=(int((pd.Timestamp(od(W1)) + D0).value // 10**6) if od(W1) in _seq else None),   # hoje (em andamento): de 07:30 até agora
                       vi=int(pd.Timestamp(od(_b0)).value // 10**6 + D0.value // 10**6), vd=_vd,
                       b2=sb2, b12=sb12, dias=[str(x) for x in _dias_w])
     # linha do dia (todos os práticos): descanso longo típico da E2D × intervalo típico da E12, e % abaixo de 5 h
@@ -659,7 +671,7 @@ def montar_relatorio(manobras):
     _REL['dia'] = {d_: {k: dict(med=float(pd.Series(v).median()), n=len(v), lt5=round(100 * sum(1 for x in v if x < 300) / len(v)))
                         for k, v in x.items()} for d_, x in DIA.items()}
     _REL['d'], _REL['i'] = D, I
-    print(f'[Relatório] {len(D)} práticos (últimas 48 h) preparados (E12 com nome até {corte:%d/%m %H:%M})')
+    print(f'[Relatório] {len(D)} práticos (dias seguidos de serviço) preparados (E12 com nome até {corte:%d/%m %H:%M})')
 
 # ── Info pauta RT ─────────────────────────────────────────────────────────────
 import re as _re_cb
@@ -2440,36 +2452,43 @@ function _h(m){{m=Math.round(m);var s=m<0?'-':'';m=Math.abs(m);return s+Math.flo
 function _lista(L){{if(!L.length)return '<tr><td>nenhuma</td></tr>';return L.map(function(x){{return '<tr class="'+(x.fut?'fut':'')+'"><td>'+(x.ab?'<b>'+x.ab+'</b> ':'')+x.t+'</td><td>'+x.f+'</td></tr>';}}).join('');}}
 function _gaps(G){{if(!G.length)return '<tr><td colspan=2>—</td></tr>';var nm={{longo:['tl','descanso longo'],ciclo:['tc','dentro do ciclo'],emendado:['te','emendado'],andamento:['ta','em andamento'],inicio:['ti','antes da 1ª'],canc:['ti','após cancelada']}};return G.map(function(g){{var t=g[3],z=nm[t],tg=z?'<span class="tg '+z[0]+'">'+z[1]+'</span> ':'';var fora=(t!=='longo'&&t!=='');return '<tr'+(fora?' class="cic"':'')+'><td>'+tg+g[0]+' → '+g[1]+'</td><td>'+(t==='emendado'?'—':_h(g[2]))+'</td></tr>';}}).join('');}}
 function _hm(t){{var d=new Date(t);return String(d.getUTCHours()).padStart(2,'0')+':'+String(d.getUTCMinutes()).padStart(2,'0');}}
-function _barra(r){{var W=700,X=function(t){{return (t-r.b0)/Math.max(1,(r.b1-r.b0))*W;}};
+function _barra(r){{var W=700,DIA=86400000,H=3600000,out='',bars=[];
+(r.dd||[]).forEach(function(S){{var dt=new Date(S);bars.push([S,S+DIA,String(dt.getUTCDate()).padStart(2,'0')+'/'+String(dt.getUTCMonth()+1).padStart(2,'0'),3]);}});
+if(r.hj){{var dh=new Date(r.hj);bars.push([r.hj,r.hj+DIA,String(dh.getUTCDate()).padStart(2,'0')+'/'+String(dh.getUTCMonth()+1).padStart(2,'0'),3]);}}
 function rc(v){{return v>=480?'#2e7d32':(v>=300?'#ef8f00':'#c62828');}}
-function linha(B,y){{var ms=B[0],gs=B[1],o='',lb='';gs.forEach(function(g){{var t=g[3],c;if(t==='emendado')return;
+bars.forEach(function(Z,zi){{var S=Z[0],E=Z[1],X=function(t){{return (t-S)/(E-S)*W;}},mov=(r.hj&&S===r.hj);
+function linha(B,y){{var ms=B[0],gs=B[1],o='<rect x="0" y="'+y+'" width="'+W+'" height="24" fill="#eeeeee"><title>fora do serviço</title></rect>';gs.forEach(function(g){{var t=g[3],c;if(t==='emendado')return;
+var g0=Math.max(g[0],S),g1=Math.min(g[1],E);if(g1<=g0)return;
 if(t==='inicio'||t==='canc'||t==='folga')c='#d9d9d9';else if(t==='andamento')c='#7cc47f';else if(t==='ciclo')c='#f3d36b';else c=rc(g[2]);
-var a=X(g[0]),b=X(g[1]);if(b-a<0.5)return;
-o+='<rect x="'+a.toFixed(1)+'" y="'+y+'" width="'+(b-a).toFixed(1)+'" height="24" fill="'+c+'"><title>'+(g[4]?'desde '+g[4]+' (última manobra antes do turno)':_hm(g[0]))+' → '+_hm(g[1])+' · '+_h(g[2])+(t==='ciclo'&&g[5]!==null?' · livre na Atalaia '+_h(Math.max(0,g[5])):'')+'</title></rect>';
+var a=X(g0),b=X(g1);if(b-a<0.5)return;var meu=(g1-g0)*2>=(g[1]-g[0])||(g[4]&&g0===S);
+o+='<rect x="'+a.toFixed(1)+'" y="'+y+'" width="'+(b-a).toFixed(1)+'" height="24" fill="'+c+'"><title>'+(g[4]?'desde '+g[4]:_hm(g[0]))+' → '+_hm(g[1])+' · '+_h(g[2])+(t==='ciclo'&&g[5]!==null?' · livre na Atalaia '+_h(Math.max(0,g[5])):'')+'</title></rect>';
+if(!meu)return;
 if(t==='ciclo'&&g[5]!==null&&g[5]>=120&&b-a>24)o+='<text x="'+((a+b)/2).toFixed(1)+'" y="'+(y+16)+'" text-anchor="middle" font-size="11" fill="#000">'+_h(Math.max(0,g[5]))+'<title>livre na Atalaia (o Δt da B na pauta)</title></text>';
-else if(g[4]&&b-a>18)o+='<text x="'+(a+2).toFixed(1)+'" y="'+(y+16)+'" font-size="10" fill="#fff">◂'+_h(g[2])+'<title>desde '+g[4]+'</title></text>';
-else if(b-a>38&&t!=='ciclo'&&t!=='inicio'&&t!=='canc'&&t!=='folga')o+='<text x="'+((a+b)/2).toFixed(1)+'" y="'+(y+16)+'" text-anchor="middle" font-size="11" fill="'+(t==='andamento'?'#000':'#fff')+'">'+_h(g[2])+(t==='andamento'?'…':'')+'</text>';}});
-var fa=null;ms.forEach(function(m){{var a=X(m[0]),b=X(m[1]),em=false;if(fa!==null&&a<fa){{a=fa;em=true;}}if(b<a+3)b=a+3;
+else if(b-a>34&&t!=='ciclo'&&t!=='inicio'&&t!=='canc'&&t!=='folga')o+='<text x="'+((a+b)/2).toFixed(1)+'" y="'+(y+16)+'" text-anchor="middle" font-size="11" fill="'+(t==='andamento'?'#000':'#fff')+'">'+(g[0]<S||g[1]>E?'↔':'')+_h(g[2])+(t==='andamento'?'…':'')+'</text>';}});
+var fa=null;ms.forEach(function(m){{var m0=Math.max(m[0],S),m1=Math.min(m[1],E);if(m1<=m0)return;var a=X(m0),b=X(m1),em=false;if(fa!==null&&a<fa){{a=fa;em=true;}}if(b<a+3)b=a+3;
 o+='<rect x="'+a.toFixed(1)+'" y="'+y+'" width="'+(b-a).toFixed(1)+'" height="24" fill="#1f3a5f" stroke="#fff" stroke-width="1"><title>'+(m[2]?m[2]+' · ':'')+(m[3]||'')+' · início '+_hm(m[0])+' · fim '+_hm(m[1])+'</title></rect>';
-if(m[2]&&b-a>11)o+='<text x="'+((a+b)/2).toFixed(1)+'" y="'+(y+16)+'" text-anchor="middle" font-size="11" fill="#fff">'+m[2]+'</text>';
-if(em)o+='<path d="M'+(a-3).toFixed(1)+' '+(y-5)+' l6 0 l-3 5 z" fill="#c62828"><title>emendada: começa antes do fim da anterior (T + lancha)</title></path>';fa=b;}});return o+lb;}}
-var tk='',t0=r.vi;while(t0-3*3600000>=r.b0)t0-=3*3600000;while(t0<r.b0)t0+=3*3600000;for(var t=t0;t<=r.b1+60000;t+=3*3600000){{var x=X(t),an=x<12?'start':(x>W-12?'end':'middle');tk+='<line x1="'+x.toFixed(1)+'" y1="6" x2="'+x.toFixed(1)+'" y2="66" stroke="#bbb" stroke-dasharray="2,3"/><text x="'+x.toFixed(1)+'" y="78" font-size="10" text-anchor="'+an+'" fill="#555">'+_hm(t)+'</text>';}}
-var dv='';(r.vd||[]).forEach(function(v,i){{var xd=X(v);if(xd>0.5&&xd<W)dv+='<line x1="'+xd.toFixed(1)+'" y1="4" x2="'+xd.toFixed(1)+'" y2="68" stroke="#000" stroke-width="1.5"><title>virada do dia (07:30)</title></line>';}});
-return '<div class="barra"><svg viewBox="-40 0 '+(W+48)+' 84" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Arial">'+tk+
-'<text x="-6" y="24" text-anchor="end" font-size="12" font-weight="600">E2D</text>'+linha(r.b2,8)+
-'<text x="-6" y="56" text-anchor="end" font-size="12" font-weight="600">E12</text>'+linha(r.b12,40)+dv+'</svg></div>'+
-'<div class="leg"><span style="background:#1f3a5f"></span>manobra (início → fim + lancha)<span style="background:#2e7d32"></span>descanso ≥ 8 h<span style="background:#ef8f00"></span>5–8 h<span style="background:#c62828"></span>&lt; 5 h<span style="background:#f3d36b"></span>dentro do ciclo (A→B; com 2 h ou mais livre na Atalaia, mostra o tempo)<span style="background:#7cc47f"></span>em andamento<span style="background:#d9d9d9"></span>antes da 1ª manobra ou folga · linha preta: virada do dia, 07:30 · ◂ descanso que começou antes das 48 h (número inteiro)<span style="background:#c62828;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:6px solid #c62828;background:none"></span>emendada</div>';}}
+if(m[2]&&b-a>11&&m[0]>=S)o+='<text x="'+((a+b)/2).toFixed(1)+'" y="'+(y+16)+'" text-anchor="middle" font-size="11" fill="#fff">'+m[2]+'</text>';
+if(em)o+='<path d="M'+(a-3).toFixed(1)+' '+(y-5)+' l6 0 l-3 5 z" fill="#c62828"><title>emendada: começa antes do fim da anterior (T + lancha)</title></path>';fa=b;}});return o;}}
+var st=Z[3]*H,t0=Math.ceil((S-450*60000)/st)*st+450*60000,tk='';for(var t=t0;t<=E+60000;t+=st){{var x=X(t),an=x<12?'start':(x>W-12?'end':'middle');tk+='<line x1="'+x.toFixed(1)+'" y1="6" x2="'+x.toFixed(1)+'" y2="66" stroke="#bbb" stroke-dasharray="2,3"/><text x="'+x.toFixed(1)+'" y="78" font-size="10" text-anchor="'+an+'" fill="#555">'+_hm(t)+'</text>';}}
+var md='';for(var M=Math.floor(S/DIA)*DIA;M<E;M+=DIA){{var a=X(Math.max(M,S)),b=X(Math.min(M+5*H,E));if(b>a)md+='<rect x="'+a.toFixed(1)+'" y="6" width="'+(b-a).toFixed(1)+'" height="60" fill="#0d1b4c" fill-opacity="0.14" pointer-events="none"/><text x="'+((a+b)/2).toFixed(1)+'" y="5" text-anchor="middle" font-size="8" fill="#0d1b4c">madrugada</text>';}}
+var dv='';if(mov&&r.ag<E){{var xa=Math.max(0,X(r.ag));dv+='<rect x="'+xa.toFixed(1)+'" y="6" width="'+(W-xa).toFixed(1)+'" height="60" fill="#fafafa"/>'+(W-xa>110?'<text x="'+((xa+W)/2).toFixed(1)+'" y="40" text-anchor="middle" font-size="11" fill="#999">ainda não aconteceu</text>':'')+'<line x1="'+xa.toFixed(1)+'" y1="4" x2="'+xa.toFixed(1)+'" y2="68" stroke="#1565c0" stroke-width="1.5"><title>agora ('+_hm(r.ag)+')</title></line>';}}
+out+='<svg viewBox="-92 0 '+(W+100)+' 84" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Arial">'+tk+
+'<text x="-90" y="36" font-size="13" font-weight="700"'+(mov?' fill="#1565c0"':'')+'>'+Z[2]+'</text>'+(mov?'<text x="-90" y="50" font-size="10" fill="#1565c0">hoje</text>':'')+
+'<text x="-6" y="24" text-anchor="end" font-size="11" font-weight="600">E2D</text>'+linha(r.b2,8)+
+'<text x="-6" y="56" text-anchor="end" font-size="11" font-weight="600">E12</text>'+linha(r.b12,40)+md+dv+'</svg>';}});
+return '<div class="barra">'+out+'</div>'+
+'<div class="leg"><span style="background:#1f3a5f"></span>manobra (início → fim + lancha)<span style="background:#2e7d32"></span>descanso ≥ 8 h<span style="background:#ef8f00"></span>5–8 h<span style="background:#c62828"></span>&lt; 5 h<span style="background:#f3d36b"></span>dentro do ciclo (A→B; com 2 h ou mais livre na Atalaia, mostra o tempo)<span style="background:#7cc47f"></span>em andamento<span style="background:#d9d9d9"></span>antes da 1ª manobra ou folga<span style="background:#0d1b4c;opacity:.3"></span>madrugada (0h–5h) · uma barra por dia, de 07:30 a 07:30 (hoje, em azul, até agora) · ↔ descanso que passa para o dia vizinho (número inteiro)<span style="background:#c62828;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:6px solid #c62828;background:none"></span>emendada</div>';}}
 function fecharRel(){{document.getElementById('relbox').style.display='none';}}
-function abrirRel(p,d){{var k=REL.i[p+'|'+d],r=k&&REL.d[k];if(!r){{document.getElementById('relin').innerHTML='<span class="x" onclick="fecharRel()">×</span>Sem relatório para '+p+': nenhuma manobra nas últimas 48 h.';document.getElementById('relbox').style.display='block';return;}}
+function abrirRel(p,d){{var k=REL.i[p+'|'+d],r=k&&REL.d[k];if(!r){{document.getElementById('relin').innerHTML='<span class="x" onclick="fecharRel()">×</span>Sem relatório para '+p+': nenhuma manobra ontem nem hoje.';document.getElementById('relbox').style.display='block';return;}}
 var a=r.s12,b=r.s2,M=function(v){{return v===null||v===undefined?'—':_h(v);}};
 var dias='';(r.dias||[]).forEach(function(dd){{var z=REL.dia[dd];if(z&&z.e2d&&z.e12)dias+='<div class="dia"><b>Dia '+dd.slice(8,10)+'/'+dd.slice(5,7)+', todos os práticos:</b> descanso longo típico da E2D <b>'+_h(z.e2d.med)+'</b> × intervalo típico da E12 <b>'+_h(z.e12.med)+'</b> · abaixo de 5 h: E2D '+z.e2d.lt5+'% × E12 '+z.e12.lt5+'%</div>';}});
 var row=function(n,x,y){{return '<tr><td>'+n+'</td><td>'+x+'</td><td>'+y+'</td></tr>';}};
 var h='<span class="x" onclick="fecharRel()">×</span>'+
-'<b>'+r.p+' · últimas 48 h: '+r.ini+' → '+r.fim+'</b><br><small>Até '+r.corte+' (depois disso a E12 ainda não tem nome). Intervalo com dia de folga no meio fica fora da comparação. '+'Descanso = do fim da manobra (início + T + lancha até a Atalaia) até o início da seguinte — o mesmo número em amarelo na pauta. Na E2D vale o descanso longo (da B até a A); na E12, todos os intervalos (a vez volta a cada 12).</small>'+dias+
+'<b>'+r.p+' · '+r.nd+(r.nd>1?' dias seguidos':' dia')+': '+r.ini+' → '+r.fim2+'</b>'+
 '<table><tr><th></th><th>E2D (descanso longo, da B até a A)</th><th>E12 real (todos os intervalos)</th></tr>'+
 row('Descanso típico','<span class="big ok">'+M(r.c2.med)+'</span>','<span class="big">'+M(r.c12.med)+'</span>')+
-row('Quantos',r.c2.n,r.c12.n)+row('Abaixo de 5 h',r.c2.lt5,r.c12.lt5)+row('Manobras',b.n,a.n)+row('Trabalho na madrugada (0h–5h)',_h(b.mad),_h(a.mad))+'</table>'+
-'<b>Linha do tempo (últimas 48 h)</b>'+_barra(r)+
+row('Manobras',b.n,a.n)+row('Trabalho na madrugada (0h–5h)',_h(b.mad),_h(a.mad))+'</table>'+
+'<b>Linha do tempo, dia a dia</b>'+_barra(r)+
 '<small>Passe o mouse (ou toque) num trecho da barra para ver a manobra ou o descanso. Fim da manobra = início + T da tabela + lancha até a Atalaia. Fora da comparação: dentro do ciclo, emendado, antes da 1ª manobra, folga e em andamento.</small>';
 document.getElementById('relin').innerHTML=h;document.getElementById('relbox').style.display='block';}}
 document.addEventListener('click',function(e){{var t=e.target.closest('.relx');if(!t||e.target.closest('.obsx'))return;abrirRel(t.dataset.p,t.dataset.d);}});

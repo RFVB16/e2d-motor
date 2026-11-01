@@ -1,6 +1,8 @@
 # Histórico de versões
 
 ## 01/11/2026
+- **Relatório enxuto:** saem as explicações do topo, as duas linhas "todos os práticos" e as linhas "Quantos" e "Abaixo de 5 h" do quadro; ficam descanso típico, manobras, trabalho na madrugada e a linha do tempo (06).
+- **Relatório, dia a dia:** o relatório cobre os dias seguidos de serviço do prático até hoje (volta até a última folga, no máximo 8 dias = 4 turnos). Uma barra por dia, de 07:30 a 07:30; a de hoje (em azul) vai até agora e o resto fica "ainda não aconteceu", sem repetir o dia anterior. Descanso que passa para o dia vizinho mostra o número inteiro com ↔. A madrugada (0h–5h) fica sombreada. O quadro conta todos os dias da sequência (06).
 - **Relatório, barra fixa de 48 h:** a barra mostra sempre exatamente as últimas 48 h, para todos os práticos (antes recuava até a última manobra de quem emendou). Descanso que começou antes aparece cortado, com o número inteiro (◂). Sai o "<2h" do amarelo (06).
 - **Relatório, barra:** no trecho amarelo (dentro do ciclo, A→B), quando o tempo livre na Atalaia é de 2 h ou mais, a barra mostra esse tempo — o mesmo Δt da B na pauta (06).
 - **Relatório por prático = últimas 48 h** (até onde a E12 já tem nome), não mais por turno: com as trocas, o prático emenda dias em qualquer ordem (D2 + D1 etc.). Intervalo que atravessa um dia de folga (pela escala do dia) fica fora da comparação, em cinza; se não houve folga, o 1º descanso conta da última manobra antes das 48 h e a barra recua até ela. Linhas pretas = virada do dia (07:30). Linha do dia: ontem e hoje (06).
