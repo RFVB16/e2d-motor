@@ -1,5 +1,8 @@
 # Histórico de versões
 
+## 01/11/2026
+- **Relatório por prático = últimas 48 h** (até onde a E12 já tem nome), não mais por turno: com as trocas, o prático emenda dias em qualquer ordem (D2 + D1 etc.). Intervalo que atravessa um dia de folga (pela escala do dia) fica fora da comparação, em cinza; se não houve folga, o 1º descanso conta da última manobra antes das 48 h e a barra recua até ela. Linhas pretas = virada do dia (07:30). Linha do dia: ontem e hoje (06).
+
 ## 31/10/2026
 - **Painel, Δt da B = tempo livre na Atalaia:** da chegada na Atalaia depois da A (início + T + lancha) até a saída da Atalaia para a B (início da B − lancha até o embarque), sem nenhum deslocamento; 0 se não sobra tempo (antes: entre inícios) (06).
 - **Relatório, linha do tempo:** quem emendou do turno anterior tem a barra começando na última manobra dele (E2D ou E12, a mais cedo), para o descanso que atravessa a troca de turno aparecer inteiro; linhas pretas marcam o início do turno e a virada do dia; marcas de 3 em 3 h alinhadas às 07:30. Quem veio de folga continua começando às 07:30 (06).
