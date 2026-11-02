@@ -1,5 +1,8 @@
 # Histórico de versões
 
+## 02/11/2026
+- **Painel, cor das manobras:** a linha só fica vermelha (executada) quando o SPPilots já finalizou: está no histórico ou vermelha na pauta. Manobra em andamento (azul), lilás ou branca continua com a cor da pauta, mesmo passados 30 min do horário (antes ficava vermelha só pelo relógio). Fora da pauta e do histórico, vale o horário, como antes (06).
+
 ## 01/11/2026
 - **Relatório enxuto:** saem as explicações do topo, as duas linhas "todos os práticos" e as linhas "Quantos" e "Abaixo de 5 h" do quadro; ficam descanso típico, manobras, trabalho na madrugada e a linha do tempo (06).
 - **Relatório, dia a dia:** o relatório cobre os dias seguidos de serviço do prático até hoje (volta até a última folga, no máximo 8 dias = 4 turnos). Uma barra por dia, de 07:30 a 07:30; a de hoje (em azul) vai até agora e o resto fica "ainda não aconteceu", sem repetir o dia anterior. Descanso que passa para o dia vizinho mostra o número inteiro com ↔. A madrugada (0h–5h) fica sombreada. O quadro conta todos os dias da sequência (06).

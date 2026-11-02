@@ -911,7 +911,13 @@ def montar_dados(manobras, rt_idx):
             m['seq_rt'] = rt_info['seq_rt']
 
         # Classificação
-        if dt < now - timedelta(minutes=30):
+        # 02/11/2026: vermelho (executada) só quando o SPPilots já finalizou — está no histórico ou
+        # vermelha na pauta. Em andamento (azul), lilás ou branca na pauta continua como no SPPilots,
+        # mesmo passados 30 min do horário. Fora da pauta e do histórico: vale o horário, como antes.
+        _st_rt = str(m['status']).strip().upper()
+        _em_and = (_st_rt in ('PROXIMO', 'BREVE', 'FUTURO', 'CONFIRMADO')
+                   and (dt, m['vessel'].strip()) not in _CB_HIST)
+        if dt < now - timedelta(minutes=30) and not _em_and:
             # HISTORICO: do inicio do dia anterior (07:30 ontem) ate a primeira da pauta atual
             #            ou ate "agora" (se nao tiver pauta carregada).
             if dt >= ini_hist and (inicio_rt is None or dt < inicio_rt):
