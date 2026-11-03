@@ -1,5 +1,8 @@
 # Histórico de versões
 
+## 03/11/2026
+- **Pauta sem depender do Chrome:** se a pauta enviada pelo Tampermonkey tiver mais de 8 min, a atualização entra no SPPilots com o próprio login e baixa a página da pauta (psh.asp), gravando pauta_rt.csv no mesmo formato do Tampermonkey (conferido byte a byte com a mesma página). O Chrome continua funcionando como antes; a validação da pauta (29/10) vale para as duas origens (03).
+
 ## 02/11/2026
 - **Painel, cor das manobras:** a linha só fica vermelha (executada) quando o SPPilots já finalizou: está no histórico ou vermelha na pauta. Manobra em andamento (azul), lilás ou branca continua com a cor da pauta, mesmo passados 30 min do horário (antes ficava vermelha só pelo relógio). Fora da pauta e do histórico, vale o horário, como antes (06).
 

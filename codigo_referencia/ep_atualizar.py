@@ -183,9 +183,86 @@ def coletar_sppilots(senha):
     except Exception as e:
         print(f'  [ERRO escala gráfica] {e}')
 
-    # pauta futura: atualizada pelo botao "Atualizar Pauta SPPILOTS" do painel HTML
-    # (requer a aba do SPPILOTS aberta no navegador, na pagina da Pauta)
+    # pauta atual: vem do Chrome (Tampermonkey). Se ficou velha (Chrome fechado, sessão caída,
+    # computador suspenso), baixa direto do SPPilots, sem navegador (03/11/2026).
+    try:
+        coletar_pauta_direto(senha)
+    except Exception as e:
+        print(f'  [ERRO pauta direta] {e}')
     avisar_pauta_rt_velha()
+
+
+PAUTA_DIRETO_MIN = 8   # baixa a pauta direto se a do Chrome tiver mais que isso (min)
+
+
+def coletar_pauta_direto(senha):
+    """Baixa a página da pauta (psh.asp) com login próprio e grava pauta_rt.csv no mesmo formato
+    do Tampermonkey (E2D_pauta_automatica.user.js v1.4). Só age se a pauta do Chrome estiver velha."""
+    import re as _re
+    if PAUTA_RT.exists():
+        idade = (datetime.now().timestamp() - PAUTA_RT.stat().st_mtime) / 60
+        if idade <= PAUTA_DIRETO_MIN:
+            return
+    from raspar_historico import fazer_login, BASE_URL
+    from bs4 import BeautifulSoup
+    s = fazer_login(senha)
+    s.get(f'{BASE_URL}/default.asp?ctx=OPR', timeout=30)
+    r = s.get(f'{BASE_URL}/sources/manobra/psh.asp', timeout=60)
+    soup = BeautifulSoup(r.text, 'html.parser')
+    SM = {'#66cc66': 'CANCELADA', '#ff4a4a': 'AGENDADO', '#33ccff': 'PROXIMO', '#b7b7ff': 'BREVE',
+          '#ffffff': 'FUTURO', '#ff0099': 'ESPECIAL', '#000000': 'ESPECIAL'}
+    hoje = datetime.now(); linhas = []
+    for tr in soup.find_all('tr'):
+        tds = tr.find_all('td')   # como o querySelectorAll('td') do Tampermonkey
+        if len(tds) < 7:
+            continue
+        txt = [td.get_text().strip() for td in tds]
+        es = txt[3].upper()
+        if es not in ('E', 'S', 'M'):
+            continue
+        mcor = _re.search(r'background\s*:\s*(#[0-9a-fA-F]{6})', tr.get('style', '') or '', _re.I)
+        cor = mcor.group(1).lower() if mcor else '#ffffff'
+        if cor == '#ffff00':        # amarelo = sem prático
+            continue
+        sta = SM.get(cor, 'FUTURO')
+        vr = txt[2]
+        tem2 = bool(_re.search(r'\(\s*2\s*PR\w*TICOS?\s*\)', vr, _re.I))
+        v = _re.sub(r'\s*\(\s*2\s*PR\w*TICOS?\s*\)\s*', '', vr, flags=_re.I).strip()
+        b = _re.sub(r'\s+', ' ', txt[4]); b2 = txt[5]; h = txt[6]
+        pra = txt[11] if len(txt) > 11 else ''
+        resto = txt[7:]
+        cal = next((x for x in resto if _re.fullmatch(r'\d{1,2}[,.]\d{1,2}(\s*\|\s*\d{1,2}[,.]\d{1,2})?', x)), '')
+        brd = next((x for x in resto if _re.fullmatch(r'(BB|BE)', x, _re.I)), '')
+        cels = ' ¦ '.join(resto)
+        ag = txt[15] if len(txt) > 15 else ''
+        ob = (txt[16] if len(txt) > 16 else '').replace('\n', ' ').replace('\r', ' ')
+        mm = _re.search(r'(\d{2})/(\d{2})\s+(\d{2}):(\d{2})', h)
+        if not mm:
+            continue
+        ano = hoje.year; mes = int(mm.group(2))
+        if mes - hoje.month < -6: ano += 1
+        if mes - hoje.month > 6: ano -= 1
+        dt = f'{ano}-{mm.group(2)}-{mm.group(1)}T{mm.group(3)}:{mm.group(4)}:00'
+        da = f'{mm.group(1)}/{mm.group(2)}/{ano}'; hh = f'{mm.group(3)}:{mm.group(4)}'
+        fr, to = (('FB', b) if es == 'E' else ((b, 'FB') if es == 'S' else (b, b2 or b)))
+        pp = [x for x in pra.split() if len(x) >= 2]
+        bi = [x for x in pp if _re.fullmatch(r'[A-Z]{2}', x)]
+        dois = tem2 or len(bi) >= 2 or bool(_re.search(r'2\s*PLT', ob, _re.I))
+        if dois and len(pp) >= 2:
+            for x in pp[:2]:
+                linhas.append([dt, da, hh, '', v, fr, to, es, b, cal, brd, ag, ob, sta, 'true', x, cels])
+        else:
+            linhas.append([dt, da, hh, '', v, fr, to, es, b, cal, brd, ag, ob, sta, str(dois).lower(), pp[0] if pp else '', cels])
+    if not linhas:
+        print('[Pauta direta] nenhuma manobra na página — mantida a pauta anterior')
+        return
+    tmp = PAUTA_RT.with_suffix('.direto.tmp')
+    hd = 'datetime,Data,Hora,Termino,Vessel,From,To,ES,Berco,Calado,Bordo,Agente,OBS,Status,dois_prat,Pratico,Celulas'
+    q = lambda x: '"' + str(x).replace('"', '""') + '"'
+    with open(tmp, 'w', encoding='utf-8', newline='') as f:   # mesmo texto que o Tampermonkey envia
+        f.write(hd + '\n' + '\n'.join(','.join(q(x) for x in r) for r in linhas))
+    tmp.replace(PAUTA_RT)
+    print(f'[Pauta direta] pauta do Chrome velha: baixada do SPPilots, {len(linhas)} manobras')
 
 
 def avisar_pauta_rt_velha():
