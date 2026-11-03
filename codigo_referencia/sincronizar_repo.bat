@@ -32,7 +32,7 @@ if exist "%PAC%" (
   for %%D in (entrada esperado esperado_alternativo) do (
     if exist "%PAC%\testes\%%D" (
       if not exist "%REPO%\testes\%%D" mkdir "%REPO%\testes\%%D"
-      copy /Y "%PAC%\testes\%%D\*" "%REPO%\testes\%%D" >nul
+      for %%G in ("%PAC%\testes\%%D\*") do copy /Y "%%~G" "%REPO%\testes\%%D\" >nul
     )
   )
 )
