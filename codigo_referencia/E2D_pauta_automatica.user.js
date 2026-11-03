@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         E2D - Salvar Pauta Automatica
 // @namespace    e2d-santos
-// @version      1.4
-// @description  Na pagina da pauta do SPPILOTS: salva a pauta no ep_server (porta 7373), recarrega a cada 5 min e refaz o login se a sessao cair.
+// @version      1.5
+// @description  Na pagina da pauta do SPPILOTS: salva a pauta no ep_server (porta 7373), recarrega a cada 5 min e refaz o login se a sessao cair (v1.5: login por formulario, nova tentativa a cada 3 min).
 // @match        https://sts.sppilots.com.br/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
@@ -116,39 +116,41 @@
     return /\bSAIR\b/.test(document.body.innerText || '') || document.body.innerText.includes('NOME DO NAVIO');
   }
 
-  async function relogar() {
+  // v1.5 (03/11/2026): o login automático pelo fetch dizia "ok", mas a pauta continuava sem sessão e a página
+  // ficava parada em "nova tentativa". Agora o login é feito como na tela (formulário de verdade, o navegador grava
+  // o cookie da sessão nova), depois abre o contexto OPR e a pauta padrão. Nova tentativa a cada 3 min, sem limite.
+  // A senha nunca é apagada sozinha, e só é pedida com a página visível (um prompt escondido travaria tudo).
+  const ESPERA_RELOGIN = 3 * 60 * 1000;
+  const hhmm = t => new Date(t).toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'});
+
+  function relogar() {
     const ult = GM_getValue('ult_relogin', 0);
-    if (Date.now() - ult < 10 * 60 * 1000) {        // no máximo 1 tentativa a cada 10 min
-      aviso('E2D: sessão caiu; nova tentativa de login em alguns minutos', '#c0392b');
-      setTimeout(() => { location.href = GM_getValue('url_pauta', URL_PAUTA_PADRAO); }, 5 * 60 * 1000);
+    if (Date.now() - ult < ESPERA_RELOGIN) {
+      const prox = ult + ESPERA_RELOGIN;
+      aviso(`E2D: sessão caiu; nova tentativa de login às ${hhmm(prox)}`, '#c0392b');
+      setTimeout(() => { location.href = URL_PAUTA_PADRAO; }, prox - Date.now() + 2000);
       return;
     }
     GM_setValue('ult_relogin', Date.now());
     let senha = GM_getValue('senha', '');
-    if (!senha) {
+    if (!senha && document.visibilityState === 'visible') {
       senha = prompt('E2D: senha do SPPILOTS para refazer o login automático (fica salva só neste computador):') || '';
-      if (!senha) { setTimeout(() => location.reload(), 10 * 60 * 1000); return; }
-      GM_setValue('senha', senha);
+      if (senha) GM_setValue('senha', senha);
+    }
+    if (!senha) {
+      aviso('E2D: falta a senha do SPPilots para o login automático. Recarregue esta página com ela na tela.', '#c0392b');
+      setTimeout(() => { location.href = URL_PAUTA_PADRAO; }, ESPERA_RELOGIN);
+      return;
     }
     aviso('E2D: sessão caiu — refazendo login...', '#e67e22');
-    try {
-      const corpo = new URLSearchParams({userid: USUARIO, password: senha, cmd: 'LOG', act: ''});
-      const r = await fetch('/default.asp', {method: 'POST', body: corpo, credentials: 'same-origin'});
-      const t = await r.text();
-      if (!t.includes('SAIR')) {
-        const nf = GM_getValue('falhas', 0) + 1; GM_setValue('falhas', nf);
-        if (nf >= 3) GM_setValue('senha', '');          // 3 falhas seguidas: pede a senha de novo
-        aviso(`E2D: login automático falhou (${nf}ª vez). Nova tentativa em 10 min.`, '#c0392b');
-        setTimeout(() => { location.href = GM_getValue('url_pauta', URL_PAUTA_PADRAO); }, 10 * 60 * 1000);
-        return;
-      }
-      GM_setValue('falhas', 0);
-      await fetch('/default.asp?ctx=OPR', {credentials: 'same-origin'});
-      location.href = GM_getValue('url_pauta', URL_PAUTA_PADRAO);
-    } catch (e) {
-      aviso('E2D: erro no login automático: ' + e, '#c0392b');
-      setTimeout(() => location.reload(), 5 * 60 * 1000);
+    GM_setValue('pos_login', Date.now());
+    const f = document.createElement('form');
+    f.method = 'POST'; f.action = '/default.asp'; f.style.display = 'none';
+    for (const [k, v] of Object.entries({userid: USUARIO, password: senha, cmd: 'LOG', act: ''})) {
+      const i = document.createElement('input'); i.type = 'hidden'; i.name = k; i.value = v; f.appendChild(i);
     }
+    document.body.appendChild(f);
+    f.submit();
   }
 
   const naPauta = location.pathname.toLowerCase().includes('/sources/manobra/psh.asp');
@@ -165,6 +167,11 @@
     } else if (GM_getValue('ativo', false)) {
       // Caiu em outra página do SPPILOTS (ex.: tela de login) enquanto rodava sozinho
       if (!logado()) relogar();
+      else if (Date.now() - GM_getValue('pos_login', 0) < 5 * 60 * 1000) {   // acabou de refazer o login
+        GM_setValue('pos_login', 0);
+        aviso('E2D: login refeito — abrindo a pauta', '#27ae60');
+        fetch('/default.asp?ctx=OPR', {credentials: 'same-origin'}).catch(() => {}).finally(() => { location.href = URL_PAUTA_PADRAO; });
+      }
       else setTimeout(() => { location.href = GM_getValue('url_pauta', URL_PAUTA_PADRAO); }, 60 * 1000);
     }
   }, ESPERA_MS);

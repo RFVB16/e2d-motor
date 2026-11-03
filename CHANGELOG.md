@@ -1,6 +1,7 @@
 # Histórico de versões
 
 ## 03/11/2026
+- **Tampermonkey v1.5, login automático:** quando a sessão do SPPilots cai, o login é refeito como na tela (formulário de verdade, o navegador grava o cookie novo), depois abre o contexto OPR e a pauta. Nova tentativa a cada 3 min, sem limite; a senha não é mais apagada sozinha e só é pedida com a página visível. Antes, o login pelo fetch dizia "ok" mas a pauta continuava sem sessão e a página ficava parada em "nova tentativa" (03).
 - **Pauta sem depender do Chrome:** se a pauta enviada pelo Tampermonkey tiver mais de 8 min, a atualização entra no SPPilots com o próprio login e baixa a página da pauta (psh.asp), gravando pauta_rt.csv no mesmo formato do Tampermonkey (conferido byte a byte com a mesma página). O Chrome continua funcionando como antes; a validação da pauta (29/10) vale para as duas origens (03).
 
 ## 02/11/2026
