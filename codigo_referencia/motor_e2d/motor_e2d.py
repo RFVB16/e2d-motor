@@ -429,4 +429,4 @@ print(f'{out.stat().st_size//1024}KB | {time.time()-t0:.0f}s')
 print(f'OK -> {out}')
 
 print(f'Fallback (ninguém disponível): {len(sim._FALLBACK_LOG)} manobras')
-import pickle as _pk; _pk.dump(sim._FALLBACK_LOG, open(os.environ.get("FB_OUT","fb.pkl"),"wb"))
+import pickle as _pk; _pk.dump(sim._CONG_FORA, open(os.environ.get("CONG_FORA_OUT","_cong_fora.pkl"),"wb")); _pk.dump(sim._FALLBACK_LOG, open(os.environ.get("FB_OUT","fb.pkl"),"wb"))

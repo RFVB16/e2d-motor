@@ -458,10 +458,64 @@ env = dict(os.environ, PAUTA_FILE=str(PAUTA_M), ESP_FONTE=str(ESP_F), TURNOS=str
            MARGEM_ENTRADA=str(MARGEM_ENTRADA), MARGEM_OUTRAS=str(MARGEM_OUTRAS), E2D_OUT=OUT_M,
            FB_OUT=str(MOTOR / '_fallback.pkl'), PYTHONIOENCODING='utf-8', BTP_OV=str(MOTOR / '_giro_T.pkl'), FROZEN=str(MOTOR / '_congeladas.pkl'),
            CANCEL=str(MOTOR / '_canceladas.pkl'))
-r = subprocess.run([sys.executable, 'motor_e2d.py'], cwd=str(MOTOR), env=env, capture_output=True,
-                   text=True, encoding='utf-8', errors='replace')
-if r.returncode != 0:
-    print(r.stdout[-1500:]); print(r.stderr[-3000:]); sys.exit(1)
+CONG_FORA = MOTOR / '_cong_fora.pkl'
+env['CONG_FORA_OUT'] = str(CONG_FORA)
+
+
+def _rodar_motor():
+    r_ = subprocess.run([sys.executable, 'motor_e2d.py'], cwd=str(MOTOR), env=env, capture_output=True,
+                        text=True, encoding='utf-8', errors='replace')
+    if r_.returncode != 0:
+        print(r_.stdout[-1500:]); print(r_.stderr[-3000:]); sys.exit(1)
+    return r_
+
+
+def _inconsistencia():
+    """Conferência interna (05/11/2026). O motor registra cada manobra congelada que NÃO era a vez do prático
+    (havia outro disponível antes dele na fila). Em operação normal isso é raro e leve (pauta mudou depois de
+    congelar). Indica congelamento gerado com dado errado quando: o congelado nem estava disponível pela regra,
+    ou havia 4+ disponíveis antes dele, ou há 3+ casos no mesmo período de 48 h. Devolve o 1º horário afetado."""
+    try:
+        L = pickle.load(open(CONG_FORA, 'rb'))
+    except Exception:
+        return None, []
+    L = [x for x in L if x[0] >= pd.Timestamp(dt.date.today() - dt.timedelta(days=10))]
+    graves = [x for x in L if (not x[6]) or x[5] >= 4]
+    ini = min([x[0] for x in graves], default=None)
+    for x in L:      # 3 ou mais no mesmo período de 48 h
+        n48 = [y for y in L if x[0] <= y[0] < x[0] + pd.Timedelta(hours=48)]
+        if len(n48) >= 3:
+            ini = x[0] if ini is None else min(ini, x[0])
+            break
+    return ini, L
+
+
+r = _rodar_motor()
+_ini, _casos = _inconsistencia()
+if _ini is not None:
+    _agora_c = pd.Timestamp(dt.datetime.now())
+    _rg = pd.to_datetime(_cg['registrado_em'], errors='coerce'); _dc = pd.to_datetime(_cg['DT'], errors='coerce')
+    _sai = (_dc >= _ini) & (_rg < _agora_c)
+    _n = int(_sai.sum())
+    _cg = _cg[~_sai]
+    for _k in list(_fz):
+        if pd.Timestamp(dt.datetime.strptime(_k[0] + ' ' + _k[1], '%d/%m/%Y %H:%M')) >= _ini:
+            del _fz[_k]
+    pickle.dump(dict(_fz), open(MOTOR / '_congeladas.pkl', 'wb'))
+    _msg = (f'congelamento inconsistente a partir de {_ini:%d/%m %H:%M} ({len(_casos)} manobra(s) congelada(s) fora da vez): '
+            f'{_n} escalação(ões) congelada(s) refeita(s) automaticamente')
+    print(f'[conferência] {_msg}')
+    _ALERTAS.append('AVISO: ' + _msg)
+    r = _rodar_motor()
+    _ini2, _ = _inconsistencia()
+    if _ini2 is not None:
+        _ALERTAS.append(f'congelamento continua inconsistente a partir de {_ini2:%d/%m %H:%M} — conferir')
+        print(f'[conferência] AINDA inconsistente a partir de {_ini2:%d/%m %H:%M}')
+    try:
+        (DIR / 'ao_vivo' / 'alertas_escala.json').write_text(_json.dumps(_ALERTAS, ensure_ascii=False), encoding='utf-8')
+    except Exception:
+        import json as _json
+        (DIR / 'ao_vivo' / 'alertas_escala.json').write_text(_json.dumps(_ALERTAS, ensure_ascii=False), encoding='utf-8')
 print('[motor]', ' | '.join(l for l in r.stdout.splitlines() if 'Etapa' in l or 'Especiais' in l or 'Fallback' in l or 'congeladas' in l))
 
 # grava as manobras que já começaram ou terminaram (azul/vermelha) e ainda não estavam congeladas

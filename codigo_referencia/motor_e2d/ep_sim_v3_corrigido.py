@@ -30,6 +30,7 @@ ESPECIAIS = set(filter(None, __import__('os').environ.get('ESP_SET','JA,SI,CH').
 THRESHOLD = 2.0
 BUFFER    = 15
 _FALLBACK_LOG = []
+_CONG_FORA = []
 import os as _os
 _ATRASO = {}
 for _x in filter(None, _os.environ.get('ATRASO','').split(';')):
@@ -607,6 +608,16 @@ def simular_turno(turno, fila_ini, man_df, T_min, T_mud, pares2,
             _p_draga = _draga_prat.get(_draga_par[k]) if k in _draga_par else None
             if _fz and k not in atrib:
                 atrib[k] = _fz[0]
+                # conferência interna (05/11/2026): o congelado era mesmo a vez dele? (1º disponível da fila)
+                try:
+                    _ja_c = set(atrib.values()) - {_fz[0]}
+                    _vez = [p for p in fila_display if p not in ESPECIAIS and p not in _ja_c and is_avail(p, dt, m_fr)
+                            and not (is_z5(m_fr, m_to) and z5_count.get(p, 0) >= Z5_LIMITE_DIA)]
+                    if _fz[0] not in ESPECIAIS and _vez and _vez[0] != _fz[0]:
+                        _pos = fila_display.index(_fz[0]) if _fz[0] in fila_display else -1
+                        _CONG_FORA.append((dt, str(man['Vessel']).strip(), _fz[0], _vez[0], _pos, _vez.index(_fz[0]) if _fz[0] in _vez else -1, is_avail(_fz[0], dt, m_fr)))
+                except Exception:
+                    pass
             if not (_p_draga and _p_draga not in ESPECIAIS) and k in _draga_ent and k not in atrib:
                 # 1ª manobra do par da draga: vai para quem está livre e SEM ciclo aberto, para que
                 # as duas manobras formem a A e a B do mesmo ciclo
