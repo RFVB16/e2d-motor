@@ -588,3 +588,34 @@ if __name__ == '__main__':
 
     salvar_resultado(df_ep, met)
     print("\nConcluído.")
+
+import json
+
+# ── Lancha por distância (05/11/2026) ─────────────────────────────────────────
+# Distância da Atalaia até cada berço (milhas), informada por Rodrigo em 05/11/2026.
+# Tempo = distância × 60 / VEL. Calibrado com os tempos que ele informou
+# Velocidade 20 nós (Rodrigo, 05/11), sem tempo fixo por trecho.
+LANCHA_VEL_NOS = 20.0
+LANCHA_FIXO_MIN = 0.0
+EMB_AT, DESEMB_AT = 12, 8      # embarque Atalaia→navio em FB; desembarque navio em FB→Atalaia
+DIST_ATALAIA = {"SAIPEM 1": 0.35, "SAIPEM 1/2": 0.35, "SAIPEM 2": 0.35, "SAIPEM 3": 0.35, "34": 1.85, "35.1": 1.65, "35.2": 1.65, "37.1": 1.25, "37.2": 1.25, "38": 1.0, "39": 1.0, "CTRLE": 1.25, "DOW": 1.0, "TEAG": 1.5, "TEG": 1.5, "TERMG": 1.4, "TGG": 1.9, "29": 2.6, "29/30": 2.5, "29A": 2.5, "30": 2.3, "31": 2.2, "31/32": 2.2, "32": 2.0, "32/33": 2.0, "33": 2.0, "TC 1.1": 2.3, "TC 1.2": 2.2, "TC 2": 2.1, "TC 3": 2.0, "TEV": 2.5, "12-A": 4.2, "12-P": 4.2, "13/14": 4.0, "16/17": 3.7, "19": 3.6, "20/21": 3.5, "23": 3.3, "25": 3.1, "EMBR.": 4.8, "OUT 2/3": 3.0, "OUT-1": 3.0, "OUT-2": 3.0, "OUT-3": 3.0, "AGEO": 5.6, "CORTE": 5.6, "CS 1": 6.0, "CS 2": 5.9, "CS 3": 5.8, "CS 4": 5.7, "EMB-1": 4.8, "EMB-1/2": 4.8, "EMB-2": 4.8, "EMB-3": 4.8, "EMB-4": 4.8, "IB BC": 5.3, "IB SP": 5.4, "IB-OE": 5.7, "VAL": 5.5, "AL 1": 7.5, "AL 2": 7.3, "AL 3": 7.1, "AL 4": 7.1, "BTP-1": 6.8, "BTP-2": 6.6, "BTP-3": 6.4, "TRSP": 7.5, "COS 2": 10.3, "COS 3": 10.3, "COS 4": 10.3, "ULT": 10.3, "TIP-2": 10.0, "TIP-3": 10.0, "TIP-4": 10.0}
+ZONA_EXTRA = {'EMB-1/2': 3, '37.2': 2}
+BERCO_ZONE.update(ZONA_EXTRA)   # berços que faltavam no cadastro
+_gL_zonas = gL
+def _min_lancha(milhas):
+    return LANCHA_FIXO_MIN + milhas * 60.0 / LANCHA_VEL_NOS
+def lancha_atalaia(berco):
+    """Atalaia → berço (min, inteiro). Berço sem distância: tabela antiga por zona menos o embarque."""
+    b = str(berco).strip()
+    if b in DIST_ATALAIA: return int(round(_min_lancha(DIST_ATALAIA[b])))
+    return max(_gL_zonas('FB', b) - EMB_AT, 0)
+def gL(berco_a, berco_b):
+    """Lancha do fim de uma manobra (berco_a) até o início da próxima (berco_b), em minutos."""
+    a, b = str(berco_a).strip(), str(berco_b).strip()
+    if a == 'FB' and b == 'FB': return 0                       # a margem de 45 cobre desembarque + embarque
+    if a == 'FB': return DESEMB_AT + lancha_atalaia(b)         # desembarcou de uma saída e vai ao berço
+    if b == 'FB': return lancha_atalaia(a) + EMB_AT            # do berço até embarcar no navio em FB
+    if a == b: return 0
+    if a in DIST_ATALAIA and b in DIST_ATALAIA:
+        return int(round(_min_lancha(abs(DIST_ATALAIA[a] - DIST_ATALAIA[b]))))
+    return _gL_zonas(a, b)

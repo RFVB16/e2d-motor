@@ -120,16 +120,19 @@ PAINEL_PATH = _DIR / 'ep_painel.html'
 ESPECIAIS   = {'JA', 'SI', 'CH'}
 
 
-def _lancha_atalaia_mod(berco_fim):
-    """Lancha do fim da B até a Atalaia (min): FB = 12; berço = lancha FB→berço − 12."""
+def _lancha_atalaia_mod(berco, embarque=False):
+    """Lancha entre a Atalaia e o local (min). Berço: Atalaia ↔ berço pela distância (05/11/2026).
+    FB: desembarque (fim de uma saída → Atalaia) = 8 min; embarque (Atalaia → navio em FB) = 12 min."""
     try:
-        from ep_algoritmo import gL as _gL, ATALAIA as _AT
+        import ep_algoritmo as _ea
     except Exception:
         return 12
-    b = str(berco_fim).strip()
+    b = str(berco).strip()
     if b == 'FB':
-        return _AT
-    return max(_gL('FB', b) - _AT, 0)
+        return getattr(_ea, 'EMB_AT', _ea.ATALAIA) if embarque else getattr(_ea, 'DESEMB_AT', _ea.ATALAIA)
+    if hasattr(_ea, 'lancha_atalaia'):
+        return _ea.lancha_atalaia(b)
+    return max(_ea.gL('FB', b) - _ea.ATALAIA, 0)
 
 
 def _local_sp(es, de, para):
@@ -760,7 +763,7 @@ def montar_relatorio(manobras):
                    'andamento' if g[7] else ('emendado' if g[3] == 'ciclo' and g[2] < 0 else g[3]),
                    f'{g[4]:%d/%m %H:%M}' if g[4] < _b0 else '',
                    # dentro do ciclo: tempo livre na Atalaia, o mesmo Δt da B na pauta (sem a lancha até o embarque da B)
-                   round(g[2] - _lancha_atalaia_mod(_de2.get(pd.Timestamp(g[5]), ''))) if g[3] == 'ciclo' else None] for g in gaps if g[4] < lim_b]
+                   round(g[2] - _lancha_atalaia_mod(_de2.get(pd.Timestamp(g[5]), ''), embarque=True)) if g[3] == 'ciclo' else None] for g in gaps if g[4] < lim_b]
             return ms, gs
         _de2 = {pd.Timestamp(dt): m.get('de', '') for dt, x, m in e2 if x == p}
         sb2 = _seg(l2, g2, a2); sb12 = _seg(l12, g12, a12)
@@ -1205,15 +1208,8 @@ def montar_dados(manobras, rt_idx):
         return False
 
     def _lancha_atalaia(berco_fim):
-        """Lancha do fim da B até a Atalaia (min)."""
-        try:
-            from ep_algoritmo import gL as _gL, ATALAIA as _AT
-        except Exception:
-            _gL, _AT = None, 12
-        b = str(berco_fim).strip()
-        if b == 'FB' or _gL is None:
-            return _AT
-        return max(_gL('FB', b) - _AT, 0)
+        """Lancha do fim da B até a Atalaia (min): mesma regra de _lancha_atalaia_mod (desembarque)."""
+        return _lancha_atalaia_mod(berco_fim)
 
     def dl_antes_da_a(m):
         """DL mostrado na linha da A: tempo do FIM da B anterior do mesmo prático
@@ -1298,7 +1294,7 @@ def montar_dados(manobras, rt_idx):
                 tot = max(0, int((dt - pd.Timestamp(_fa)).total_seconds() // 60))
             elif str(m.get('ab', '')).strip().upper() == 'B':   # tempo livre na Atalaia (31/10/2026): da chegada na Atalaia
                 # depois da A (início + T + lancha) até a saída da Atalaia para a B (início da B − lancha até o embarque)
-                _sai = dt - pd.Timedelta(minutes=_lancha_atalaia_mod(m.get('de', '')))
+                _sai = dt - pd.Timedelta(minutes=_lancha_atalaia_mod(m.get('de', ''), embarque=True))
                 tot = max(0, int((_sai - pd.Timestamp(_fa)).total_seconds() // 60))
             h_, mn_ = divmod(tot, 60)
             saidas.append(f'{h_}h{mn_:02d}' if h_ else f'{mn_}min')

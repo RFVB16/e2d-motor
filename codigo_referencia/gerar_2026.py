@@ -470,6 +470,11 @@ def _rodar_motor():
     return r_
 
 
+# Última mudança de regra do motor (05/11/2026: lancha por distância a 20 nós, desembarque 8 min,
+# tabela nova de T das mudanças). A conferência do congelamento só olha manobras a partir daqui.
+REGRA_DESDE = pd.Timestamp(os.environ.get('REGRA_DESDE', '2026-11-05 21:00'))
+
+
 def _inconsistencia():
     """Conferência interna (05/11/2026). O motor registra cada manobra congelada que NÃO era a vez do prático
     (havia outro disponível antes dele na fila). Em operação normal isso é raro e leve (pauta mudou depois de
@@ -480,6 +485,9 @@ def _inconsistencia():
     except Exception:
         return None, []
     L = [x for x in L if x[0] >= pd.Timestamp(dt.date.today() - dt.timedelta(days=10))]
+    # Manobras anteriores à última mudança de regra foram escaladas pela regra antiga: não contam aqui
+    # (senão a regra nova acusaria o passado de 'fora da vez' e refaria escalações já cumpridas).
+    L = [x for x in L if x[0] >= REGRA_DESDE]
     graves = [x for x in L if (not x[6]) or x[5] >= 4]
     ini = min([x[0] for x in graves], default=None)
     for x in L:      # 3 ou mais no mesmo período de 48 h
