@@ -203,7 +203,11 @@ def corrigir(plan, seq):
     """Quem manobrou e não estava na escala entra no lugar de quem não manobrou,
     na posição que deixa a vez real da E12 em ordem (mesma regra validada em 17/10)."""
     W = set(seq)
-    outs = [i for i, x in enumerate(plan) if x not in W and x not in ESP]
+    # Sigla repetida na escala (erro de leitura da escala gráfica, ex.: 03/11/2026 leu NI duas vezes no lugar do LC):
+    # todas as posições da sigla repetida viram candidatas a troca; no fim ela fica uma vez só.
+    _cnt = {x: plan.count(x) for x in plan if x is not None and x not in ESP}
+    dups = {x for x, c in _cnt.items() if c > 1}
+    outs = [i for i, x in enumerate(plan) if (x not in W or x in dups) and x not in ESP]
     ins = [x for x in seq if x not in plan and x not in ESP]
     if not ins or not outs:
         return plan
@@ -213,15 +217,43 @@ def corrigir(plan, seq):
         e = list(plan)
         for x, s in zip(ins, slots):
             e[s] = x
+        _r = [x for x in e if x is not None and x not in ESP]
+        if len(_r) != len(set(_r)) and len(set(_r)) < len(set(x for x in plan if x is not None and x not in ESP)) + len(ins):
+            continue      # ainda sobrou sigla repetida: troca inválida
         c = _custo(e, seq)
         if melhor is None or c < melhor[0]:
             melhor = (c, e)
-    return melhor[1]
+    return melhor[1] if melhor else plan
 
 
 escala = {}
 for d, (tipo, plan) in plano.items():
     escala[d] = (tipo, corrigir(plan, seq_dia[d]) if seq_dia.get(d) else plan)
+
+# ── CONFERÊNCIA DA ESCALA (05/11/2026): cada dia tem que ter 12 siglas diferentes e incluir todos que manobraram ──
+# Erro aqui não pode passar despercebido: vai para ao_vivo/alertas_escala.json e aparece em vermelho no painel.
+_ALERTAS = []
+_hoje = dt.date.today()
+for _d in sorted(escala):
+    if not (_hoje - dt.timedelta(days=4) <= _d <= _hoje + dt.timedelta(days=3)):
+        continue
+    _w = [x for x in escala[_d][1] if x]
+    _rep = sorted({x for x in _w if _w.count(x) > 1})
+    _fora = [x for x in seq_dia.get(_d, []) if x not in _w and x not in ESP]
+    if _rep:
+        _ALERTAS.append(f'{_d:%d/%m}: escala com sigla repetida ({", ".join(_rep)}) — confira a escala gráfica')
+    if len(_w) != 12:
+        _ALERTAS.append(f'{_d:%d/%m}: escala com {len(_w)} siglas (deveriam ser 12)')
+    if _fora:
+        _ALERTAS.append(f'{_d:%d/%m}: manobrou e não está na escala: {", ".join(_fora)}')
+for _a in _ALERTAS:
+    print(f'[ALERTA ESCALA] {_a}')
+try:
+    (DIR / 'ao_vivo').mkdir(exist_ok=True)
+    import json as _json
+    (DIR / 'ao_vivo' / 'alertas_escala.json').write_text(_json.dumps(_ALERTAS, ensure_ascii=False), encoding='utf-8')
+except Exception as _e:
+    print(f'[ALERTA ESCALA] não gravado: {_e}')
 
 # turnos D1+D2
 dias = sorted(escala)
@@ -390,6 +422,24 @@ for _r in _canc.itertuples():
     if str(_r.Pratico).strip():
         _d = pd.Timestamp(_r.DT)
         _fz[(_d.strftime('%d/%m/%Y'), _d.strftime('%H:%M'), str(_r.Vessel).strip())].append(str(_r.Pratico).strip())
+# Não se congela o que foi gerado errado (05/11/2026): prático congelado numa manobra de um dia em que ele
+# não está na escala (ex.: AB e LC em 03-05/11/2026, por erro de leitura da escala gráfica) é descartado e avisado.
+_desc = []
+for _k in list(_fz):
+    _dop = dia_op(pd.Timestamp(dt.datetime.strptime(_k[0] + ' ' + _k[1], '%d/%m/%Y %H:%M')))
+    _esc_d = set(x for x in escala.get(_dop, ('', []))[1] if x)
+    if not _esc_d:
+        continue
+    _ok = [x for x in _fz[_k] if x in ESP or x in _esc_d]
+    _ruim = [x for x in _fz[_k] if x not in _ok]
+    if _ruim:
+        _desc.append(f'{_k[0][:5]} {_k[1]} {_k[2]}: {", ".join(_ruim)}')
+        if _ok: _fz[_k] = _ok
+        else: del _fz[_k]
+if _desc:
+    print(f'[congelada] {len(_desc)} escalação(ões) congelada(s) descartada(s): prático fora da escala do dia')
+    for _x in _desc[-10:]:
+        print(f'   {_x}')
 pickle.dump(dict(_fz), open(MOTOR / '_congeladas.pkl', 'wb'))
 OUT_M = '_E2D_live.xlsx'
 env = dict(os.environ, PAUTA_FILE=str(PAUTA_M), ESP_FONTE=str(ESP_F), TURNOS=str(TURNOS),

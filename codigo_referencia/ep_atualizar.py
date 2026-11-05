@@ -572,6 +572,42 @@ def ler_planilha():
     return manobras
 
 
+# ── Conferência da fila (05/11/2026): a fila tem 12 posições; mais de 12 ou sigla repetida é erro e tem de aparecer ──
+_ALERTAS_PAINEL = []
+
+def conferir_fila(manobras):
+    """Alertas: escalação com mais de 12 nomes ou com sigla repetida (últimos 2 dias e futuras), e os
+    alertas da escala gravados pelo gerar_2026.py (ao_vivo/alertas_escala.json)."""
+    import re as _re, json as _json
+    out = []
+    try:
+        f = _DIR / 'ao_vivo' / 'alertas_escala.json'
+        if f.exists():
+            out += [str(x) for x in _json.loads(f.read_text(encoding='utf-8'))]
+    except Exception as e:
+        out.append(f'alertas da escala não lidos: {e}')
+    lim = datetime.now() - timedelta(days=2)
+    vistos = set()
+    for m in manobras:
+        try:
+            if m['datetime'] < lim or not m.get('escalacao'):
+                continue
+        except Exception:
+            continue
+        nomes = [_re.sub(r'\(.*?\)', '', x).strip() for x in m['escalacao'].split('>') if x.strip()]
+        rep = sorted({x for x in nomes if nomes.count(x) > 1})
+        if len(nomes) > 12 or rep:
+            dia = m['datetime'].strftime('%d/%m')
+            msg = (f'{dia}: fila com {len(nomes)} nomes' if len(nomes) > 12 else f'{dia}: fila com sigla repetida') + \
+                  (f' (repetida: {", ".join(rep)})' if rep else '') + f' — 1ª vez às {m["datetime"]:%H:%M} ({m["vessel"]})'
+            if (dia, len(nomes) > 12, tuple(rep)) not in vistos:
+                vistos.add((dia, len(nomes) > 12, tuple(rep)))
+                out.append(msg)
+    for a in out:
+        print(f'[ALERTA] {a}')
+    return out
+
+
 # ── Relatório por prático: E12 real × E2D no turno (descanso útil, mesmo critério nas duas) ──
 _REL = {'d': {}, 'i': {}, 'dia': {}}
 
@@ -2299,6 +2335,12 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
     # ── Stats ─────────────────────────────────────────────────────────────────
     n_disp  = sum(1 for x in fila_items if x['status'] == 'disponível')
 
+    alerta_html = ''
+    if _ALERTAS_PAINEL:
+        _li = ''.join(f'<li>{a}</li>' for a in _ALERTAS_PAINEL)
+        alerta_html = ('<div style="background:#c0392b;color:#fff;padding:10px 16px;font-weight:700;font-size:15px">'
+                       '⚠ ERRO NA ESCALA — conferir antes de usar o painel<ul style="margin:6px 0 0 18px;font-weight:400">'
+                       + _li + '</ul></div>')
     html = f'''<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -2449,6 +2491,7 @@ body {{ font-family: "Segoe UI", Arial, sans-serif; font-size: 12px; background:
   </div>
 </div>
 
+{alerta_html}
 <div class="stats">
   <span style="margin-left:auto;opacity:.7">Dados atualizados a cada 10 min · próxima verificação em <span id="countdown">5:00</span></span>
 </div>
@@ -2622,6 +2665,11 @@ def main():
     manobras = ler_planilha()
     print(f'[Planilha] {len(manobras)} manobras lidas')
 
+    global _ALERTAS_PAINEL
+    try:
+        _ALERTAS_PAINEL = conferir_fila(manobras)
+    except Exception as _e:
+        _ALERTAS_PAINEL = [f'conferência da fila não feita: {_e}']
     rt_idx = info_pauta_rt()
     passadas, futuras, historico, ultima_esc, deltas_min_dia, posicoes_apos_b = montar_dados(manobras, rt_idx)
     try:
