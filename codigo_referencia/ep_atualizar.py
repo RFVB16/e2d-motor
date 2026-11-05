@@ -668,12 +668,12 @@ def montar_relatorio(manobras):
         g = (lim - prev).total_seconds() / 60
         if g > 0:
             _acn = bool(prox) and lim == prox[0]   # termina no início da próxima: intervalo completo
-            # entrou de folga depois da última manobra: "fim do serviço", da última manobra até 07:30 do último dia
-            # (05/11/2026, decisão do Rodrigo: ainda é tempo de serviço, a folga só começa às 07:30 — ENTRA no descanso típico)
+            # entrou de folga depois da última manobra: descanso até o fim do período (05/11/2026: mostrado em verde-claro,
+            # "fim do serviço", nas duas escalas; continua fora da comparação porque o descanso segue pela folga)
             _fs = (not prim) and _fol(prevdt, lim)
             gaps.append((prevlab, 'fim do serviço' if (lim == fimw or _fs) else ('próxima ' + f'{prox[0]:%d/%m %H:%M}' if _acn else f'{corte:%d/%m %H:%M} (em andamento)'), g,
                          'fimserv' if _fs else ('inicio' if prim else ('canc' if prevab == 'X' else ('ciclo' if (prevab == 'A' and lim != fimw) else 'longo'))),
-                         prev, lim, ((not prim) and (not _fs) and _acn) or (_fs and lim == fimw), (not prim) and lim != fimw and not _acn))
+                         prev, lim, (not prim) and (not _fs) and _acn, (not prim) and (not _fs) and lim != fimw and not _acn))
         # madrugada (0h–5h): da saída à volta da Atalaia, unindo se < 2 h em terra
         per = []
         for dt, end, _, _ in use:
@@ -688,7 +688,7 @@ def montar_relatorio(manobras):
                 d += pd.Timedelta(days=1)
         gaps = [tuple(g) + (False,) * (8 - len(g)) for g in gaps]   # (de, até, min, tipo, início, fim, entre duas manobras, em andamento)
         vals = [max(g[2], 0) for g in gaps]
-        lon = [max(g[2], 0) for g in gaps if g[3] in ('longo', 'fimserv')]; cic = [max(g[2], 0) for g in gaps if g[3] == 'ciclo']
+        lon = [max(g[2], 0) for g in gaps if g[3] == 'longo']; cic = [max(g[2], 0) for g in gaps if g[3] == 'ciclo']
         return gaps, dict(n=sum(1 for z in use if z[3] != 'X'), maior=max(vals) if vals else 0, total=sum(vals), mad=mad, fechado=fechado,
                           maior_longo=max(lon) if lon else 0, total_longo=sum(lon), total_ciclo=sum(cic), n_ciclo=len(cic))
 
@@ -744,12 +744,12 @@ def montar_relatorio(manobras):
         if a2 and not _deserv(p, a2[0], (sorted(l2)[0][0] if l2 else W1)): a2 = None
         if a12 and not _deserv(p, a12[0], (sorted(l12)[0][0] if l12 else W1)): a12 = None
         g12, s12 = calc(l12, ini, fimw, a12, p); g2, s2 = calc(l2, ini, fimw, a2, p)
-        _l2 = [g[2] for g in g2 if g[3] in ('longo', 'fimserv') and g[6]]
+        _l2 = [g[2] for g in g2 if g[3] == 'longo' and g[6]]
         _l12 = [g[2] for g in g12 if g[6]]
         _med = lambda v: float(pd.Series(v).median()) if v else None
         for _g, _lst in ((g2, _INT['e2d']), (g12, _INT['e12'])):
             for g in _g:
-                if g[6] and (_g is g12 or g[3] in ('longo', 'fimserv')) and od(g[5]) in _dias_w:
+                if g[6] and (_g is g12 or g[3] == 'longo') and od(g[5]) in _dias_w:
                     _lst.append((od(g[5]), g[2]))
         lim_b = min(W1, fimw)
         _b0 = ini   # barras: um dia por barra, de 07:30 a 07:30 (hoje: até agora)   # a barra recua até a última manobra antes da janela (sem folga no meio)
@@ -2578,7 +2578,7 @@ document.addEventListener('DOMContentLoaded',function(){{try{{if(localStorage.ge
 var REL = __RELJSON__;
 function _h(m){{m=Math.round(m);var s=m<0?'-':'';m=Math.abs(m);return s+Math.floor(m/60)+'h'+String(m%60).padStart(2,'0');}}
 function _lista(L){{if(!L.length)return '<tr><td>nenhuma</td></tr>';return L.map(function(x){{return '<tr class="'+(x.fut?'fut':'')+'"><td>'+(x.ab?'<b>'+x.ab+'</b> ':'')+x.t+'</td><td>'+x.f+'</td></tr>';}}).join('');}}
-function _gaps(G){{if(!G.length)return '<tr><td colspan=2>—</td></tr>';var nm={{longo:['tl','descanso longo'],ciclo:['tc','dentro do ciclo'],emendado:['te','emendado'],andamento:['ta','em andamento'],inicio:['ti','antes da 1ª'],canc:['ti','após cancelada'],fimserv:['tf','fim do serviço']}};return G.map(function(g){{var t=g[3],z=nm[t],tg=z?'<span class="tg '+z[0]+'">'+z[1]+'</span> ':'';var fora=(t!=='longo'&&t!=='fimserv'&&t!=='');return '<tr'+(fora?' class="cic"':'')+'><td>'+tg+g[0]+' → '+g[1]+'</td><td>'+(t==='emendado'?'—':_h(g[2]))+'</td></tr>';}}).join('');}}
+function _gaps(G){{if(!G.length)return '<tr><td colspan=2>—</td></tr>';var nm={{longo:['tl','descanso longo'],ciclo:['tc','dentro do ciclo'],emendado:['te','emendado'],andamento:['ta','em andamento'],inicio:['ti','antes da 1ª'],canc:['ti','após cancelada'],fimserv:['tf','fim do serviço']}};return G.map(function(g){{var t=g[3],z=nm[t],tg=z?'<span class="tg '+z[0]+'">'+z[1]+'</span> ':'';var fora=(t!=='longo'&&t!=='');return '<tr'+(fora?' class="cic"':'')+'><td>'+tg+g[0]+' → '+g[1]+'</td><td>'+(t==='emendado'?'—':_h(g[2]))+'</td></tr>';}}).join('');}}
 function _hm(t){{var d=new Date(t);return String(d.getUTCHours()).padStart(2,'0')+':'+String(d.getUTCMinutes()).padStart(2,'0');}}
 function _barra(r){{var W=700,DIA=86400000,H=3600000,out='',bars=[];
 (r.dd||[]).forEach(function(S){{var dt=new Date(S);bars.push([S,S+DIA,String(dt.getUTCDate()).padStart(2,'0')+'/'+String(dt.getUTCMonth()+1).padStart(2,'0'),3]);}});
@@ -2606,7 +2606,7 @@ out+='<svg viewBox="-92 0 '+(W+100)+' 84" xmlns="http://www.w3.org/2000/svg" fon
 '<text x="-6" y="24" text-anchor="end" font-size="11" font-weight="600">E2D</text>'+linha(r.b2,8)+
 '<text x="-6" y="56" text-anchor="end" font-size="11" font-weight="600">E12</text>'+linha(r.b12,40)+md+dv+'</svg>';}});
 return '<div class="barra">'+out+'</div>'+
-'<div class="leg"><span style="background:#1f3a5f"></span>manobra (início → fim + lancha)<span style="background:#2e7d32"></span>descanso ≥ 8 h<span style="background:#ef8f00"></span>5–8 h<span style="background:#c62828"></span>&lt; 5 h<span style="background:#f3d36b"></span>dentro do ciclo (A→B; com 2 h ou mais livre na Atalaia, mostra o tempo)<span style="background:#7cc47f"></span>em andamento<span style="background:#b2dfdb"></span>fim do serviço (da última manobra até 07:30 do último dia de serviço; conta como descanso)<span style="background:#d9d9d9"></span>antes da 1ª manobra ou folga<span style="background:#0d1b4c;opacity:.3"></span>madrugada (0h–5h) · uma barra por dia, de 07:30 a 07:30 (hoje, em azul, até agora) · ↔ descanso que passa para o dia vizinho (número inteiro)<span style="background:#c62828;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:6px solid #c62828;background:none"></span>emendada</div>';}}
+'<div class="leg"><span style="background:#1f3a5f"></span>manobra (início → fim + lancha)<span style="background:#2e7d32"></span>descanso ≥ 8 h<span style="background:#ef8f00"></span>5–8 h<span style="background:#c62828"></span>&lt; 5 h<span style="background:#f3d36b"></span>dentro do ciclo (A→B; com 2 h ou mais livre na Atalaia, mostra o tempo)<span style="background:#7cc47f"></span>em andamento<span style="background:#b2dfdb"></span>fim do serviço (da última manobra até o fim do período; o descanso continua na folga)<span style="background:#d9d9d9"></span>antes da 1ª manobra ou folga<span style="background:#0d1b4c;opacity:.3"></span>madrugada (0h–5h) · uma barra por dia, de 07:30 a 07:30 (hoje, em azul, até agora) · ↔ descanso que passa para o dia vizinho (número inteiro)<span style="background:#c62828;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:6px solid #c62828;background:none"></span>emendada</div>';}}
 function fecharRel(){{document.getElementById('relbox').style.display='none';}}
 function abrirRel(p,d){{var k=REL.i[p+'|'+d],r=k&&REL.d[k];if(!r){{document.getElementById('relin').innerHTML='<span class="x" onclick="fecharRel()">×</span>Sem relatório para '+p+': nenhuma manobra ontem nem hoje.';document.getElementById('relbox').style.display='block';return;}}
 var a=r.s12,b=r.s2,M=function(v){{return v===null||v===undefined?'—':_h(v);}};
@@ -2618,7 +2618,7 @@ var h='<span class="x" onclick="fecharRel()">×</span>'+
 row('Descanso típico','<span class="big ok">'+M(r.c2.med)+'</span>','<span class="big">'+M(r.c12.med)+'</span>')+
 row('Manobras',b.n,a.n)+row('Trabalho na madrugada (0h–5h)',_h(b.mad),_h(a.mad))+'</table>'+
 '<b>Linha do tempo, dia a dia</b>'+_barra(r)+
-'<small>Passe o mouse (ou toque) num trecho da barra para ver a manobra ou o descanso. Fim da manobra = início + T da tabela + lancha até a Atalaia. Fora da comparação: dentro do ciclo, emendado, antes da 1ª manobra, folga e em andamento. O fim do serviço (até 07:30 do último dia) conta.</small>';
+'<small>Passe o mouse (ou toque) num trecho da barra para ver a manobra ou o descanso. Fim da manobra = início + T da tabela + lancha até a Atalaia. Fora da comparação: dentro do ciclo, emendado, antes da 1ª manobra, fim do serviço, folga e em andamento.</small>';
 document.getElementById('relin').innerHTML=h;document.getElementById('relbox').style.display='block';}}
 document.addEventListener('click',function(e){{var t=e.target.closest('.relx');if(!t||e.target.closest('.obsx'))return;abrirRel(t.dataset.p,t.dataset.d);}});
 </script>
