@@ -413,6 +413,18 @@ CONG = DIR / 'dados' / 'escalacao_finalizada.csv'
 # não se congela o que foi gerado errado. O painel foi refeito do zero com as regras corretas e o congelamento
 # vale daí em diante. dados/escalacao_congelada.csv fica guardado, sem uso.
 _cg = pd.read_csv(CONG, dtype=str) if CONG.exists() else pd.DataFrame(columns=['DT', 'Vessel', 'Pratico', 'registrado_em'])
+# Períodos descongelados (dados/descongelar.json): escalações congeladas que foram geradas com dado errado
+# (ex.: escala lida errada) e por isso não valem. Cada item: {"de", "registradas_antes_de", "motivo"}.
+_DESC = DIR / 'dados' / 'descongelar.json'
+if _DESC.exists() and len(_cg):
+    import json as _json
+    _n0 = len(_cg)
+    _dtc = pd.to_datetime(_cg['DT'], errors='coerce'); _rgc = pd.to_datetime(_cg['registrado_em'], errors='coerce')
+    _drop = pd.Series(False, index=_cg.index)
+    for _it in _json.loads(_DESC.read_text(encoding='utf-8')):
+        _drop |= (_dtc >= pd.Timestamp(_it['de'])) & (_rgc < pd.Timestamp(_it['registradas_antes_de']))
+    _cg = _cg[~_drop]
+    print(f'[congelada] {_n0 - len(_cg)} escalação(ões) congelada(s) desconsiderada(s) por dados/descongelar.json')
 _fz = defaultdict(list)
 for _r in _cg.itertuples():
     _d = pd.Timestamp(_r.DT)
