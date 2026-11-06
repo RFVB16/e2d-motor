@@ -406,6 +406,27 @@ try:
         print(f'[giro] {len(_GIRO_T)} manobra(s) de giro com T da tabela')
 except Exception as _e:
     print(f'[giro] não aplicado: {_e}')
+# Navio de passageiros: T próprio por berço (regra de 06/11/2026). Tabelas em inputs\navios_passageiros.csv
+# (lista de navios) e inputs\T_passageiros.csv (Navio, Berco, Tipo E/S, T_min; Navio "*" = qualquer navio
+# de passageiros). Prioridade: linha do navio > linha "*" > T do berço. Vai para o mesmo arquivo de exceções
+# de T dos giros (_giro_T.pkl), por (data hora, De, Para), que o motor e o painel já usam.
+_PAX_T = 0
+try:
+    _nav_pax = {str(v).strip().upper() for v in pd.read_csv(DIR / 'inputs' / 'navios_passageiros.csv', encoding='utf-8-sig').Navio.dropna()}
+    _tp = pd.read_csv(DIR / 'inputs' / 'T_passageiros.csv', encoding='utf-8-sig', dtype=str).dropna(subset=['Navio', 'Berco', 'Tipo', 'T_min'])
+    _tpx = {(str(n).strip().upper(), str(b).strip(), str(t).strip().upper()): float(m)
+            for n, b, t, m in zip(_tp.Navio, _tp.Berco, _tp.Tipo, _tp.T_min)}
+    for _i in range(len(p)):
+        _v = str(p.Vessel.iat[_i]).strip().upper(); _de = str(p.De.iat[_i]).strip(); _pa = str(p.Para.iat[_i]).strip()
+        if _v not in _nav_pax or (_de == 'FB') == (_pa == 'FB'):
+            continue
+        _tipo, _b = ('E', _pa) if _de == 'FB' else ('S', _de)
+        _t = _tpx.get((_v, _b, _tipo), _tpx.get(('*', _b, _tipo)))
+        if _t is not None:
+            _GIRO_T[(p.DT.iat[_i].strftime('%Y-%m-%d %H:%M'), _de, _pa)] = _t; _PAX_T += 1
+    print(f'[passageiros] {_PAX_T} manobra(s) de navio de passageiros com T próprio')
+except Exception as _e:
+    print(f'[passageiros] não aplicado: {_e}')
 pickle.dump(_GIRO_T, open(MOTOR / '_giro_T.pkl', 'wb'))
 
 # arquivos de entrada do motor

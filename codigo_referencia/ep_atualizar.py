@@ -87,11 +87,14 @@ def _giro_T_dict():
     return _giro_cache['d']
 
 def _gT_m(de, para, dt):
+    # T da exceção (giro ou navio de passageiros, gravados pelo gerar_2026.py), senão o gT() de sempre.
     de = str(de).strip(); para = str(para).strip()
-    if de == 'FB' and para == 'FB':
-        g = _giro_T_dict().get((pd.Timestamp(dt).strftime('%Y-%m-%d %H:%M'), 'FB', 'FB'))
-        if g is not None:
-            return g
+    try:
+        g = _giro_T_dict().get((pd.Timestamp(dt).strftime('%Y-%m-%d %H:%M'), de, para))
+    except Exception:
+        g = None
+    if g is not None:
+        return g
     return _gT(de, para, _T_min, _T_mud)
 
 
