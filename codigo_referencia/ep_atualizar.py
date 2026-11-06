@@ -117,6 +117,9 @@ def _sem_canceladas(d):
 PAUTA_XLSX  = _DIR / 'inputs' / 'Pauta_de_Manobra_2026.xlsx'
 XLSX_OUT    = _DIR / 'ao_vivo' / 'E2D_2026_v6.xlsx'   # simulação ao vivo (refeita a cada rodada)
 PAINEL_PATH = _DIR / 'ep_painel.html'
+PAINEL_PUBLICO_PATH = _DIR / 'ep_painel_publico.html'   # o que vai para o site (sem a margem extra)
+_TIT_PRT_LOCAL = ("⚠ = risco de atraso (pouco tempo entre o fim previsto da A e a B). M (na manobra em que o prático está a bordo) = margem extra possível: ele foi escalado para a próxima manobra (1 h antes dela) ainda dentro do T desta; se ainda estiver a bordo, pode pedir +1 h. Só manobras confirmadas. Toque no símbolo para ver o motivo.")
+_TIT_PRT_PUBLICO = "⚠ = risco de atraso (pouco tempo entre o fim previsto da A e a B). Só manobras confirmadas. Toque no ⚠ para ver o motivo."
 ESPECIAIS   = {'JA', 'SI', 'CH'}
 
 
@@ -2647,7 +2650,7 @@ document.addEventListener('DOMContentLoaded',function(){{try{{if(localStorage.ge
       <table id="projtab" class="hide-esc">
         <thead><tr>
           <th>Navio</th><th>Local</th><th>Horário</th>
-          <th title="⚠ = risco de atraso (pouco tempo entre o fim previsto da A e a B). M (na manobra em que o prático está a bordo) = margem extra possível: ele foi escalado para a próxima manobra (1 h antes dela) ainda dentro do T desta; se ainda estiver a bordo, pode pedir +1 h. Só manobras confirmadas. Toque no símbolo para ver o motivo.">PRT</th><th>Calado</th><th>Bordo</th><th>A/B</th><th title="Na A (amarelo): descanso, do fim da manobra anterior (início + T + lancha até a Atalaia) até o início da A — o mesmo do relatório. Na B: tempo livre na Atalaia, da chegada depois da A (início + T + lancha) até a saída para a B (início da B − lancha até o embarque)">Δt</th><th class="esc-col">Escalação</th>
+          <th title="{_TIT_PRT_LOCAL}">PRT</th><th>Calado</th><th>Bordo</th><th>A/B</th><th title="Na A (amarelo): descanso, do fim da manobra anterior (início + T + lancha até a Atalaia) até o início da A — o mesmo do relatório. Na B: tempo livre na Atalaia, da chegada depois da A (início + T + lancha) até a saída para a B (início da B − lancha até o embarque)">Δt</th><th class="esc-col">Escalação</th>
         </tr></thead>
         <tbody>{proj_html}</tbody>
       </table>
@@ -2721,6 +2724,14 @@ document.addEventListener('click',function(e){{var t=e.target.closest('.relx');i
     import json as _json
     html = html.replace('__RELJSON__', _json.dumps(_REL, ensure_ascii=False, default=str).replace('</', '<\\/'))
     PAINEL_PATH.write_text(html, encoding='utf-8')
+    # 05/11/2026: a margem extra (M) só aparece no painel local; a versão publicada no site vai sem ela
+    try:
+        import re as _re_pub
+        _pub = _re_pub.sub(r'<span class="obsx" tabindex="0" title="[^"]*" onclick="[^"]*">M<span class="obsx-txt">[^<]*</span></span>', '', html)
+        _pub = _pub.replace(_TIT_PRT_LOCAL, _TIT_PRT_PUBLICO)
+        PAINEL_PUBLICO_PATH.write_text(_pub, encoding='utf-8')
+    except Exception as _e:
+        print(f'[Painel] versão pública não gerada ({_e}); o site usará o painel completo')
     print(f'[Painel] ep_painel.html gerado')
 
 

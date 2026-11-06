@@ -66,7 +66,8 @@ if /i not "%~1"=="auto" start "" "%PROJETO%\ep_painel.html"
 
 REM 3. Copia para pasta publica
 echo [2/4] Copiando painel para pasta publica...
-copy /Y "%PROJETO%\ep_painel.html" "%PUBLICO%\index.html" >nul
+REM 05/11/2026: o site recebe a versao sem a margem extra (M); se ela nao existir, usa o painel completo
+if exist "%PROJETO%\ep_painel_publico.html" (copy /Y "%PROJETO%\ep_painel_publico.html" "%PUBLICO%\index.html" >nul) else (copy /Y "%PROJETO%\ep_painel.html" "%PUBLICO%\index.html" >nul)
 
 REM 4. Commit + push
 cd /d "%PUBLICO%"
