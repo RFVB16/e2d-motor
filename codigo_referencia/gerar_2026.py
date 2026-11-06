@@ -59,6 +59,34 @@ def _ler_csv(path):
 h = _ler_csv(HIST); rt = _ler_csv(RT)
 
 
+# 06/11/2026 (Rodrigo): manobras no MESMO horário seguem a ordem da pauta ao vivo do SPPilots (a numeração
+# põe a mais curta primeiro: quem está na frente da fila vai nela). O histórico não respeita essa ordem.
+# Guardamos a ordem da pauta ao vivo até a hora da escalação (início − 1 h) e usamos ela também depois.
+ORDEM = DIR / 'dados' / 'ordem_ao_vivo.csv'
+try:
+    _ord = pd.read_csv(ORDEM, encoding='utf-8-sig', dtype=str) if ORDEM.exists() else pd.DataFrame(columns=['DT', 'Vessel', 'pos'])
+except Exception as _e:
+    print(f'[ordem] ordem_ao_vivo.csv não lido: {_e}'); _ord = pd.DataFrame(columns=['DT', 'Vessel', 'pos'])
+if not rt.empty:
+    _agora_o = pd.Timestamp(dt.datetime.now())
+    _rt_o = rt[rt.DT - pd.Timedelta(hours=1) > _agora_o]          # ainda antes da escalação: a ordem pode mudar
+    _n_o = _rt_o.groupby('DT')['Vessel'].transform('nunique')
+    _rt_o = _rt_o[_n_o >= 2]
+    if len(_rt_o):
+        _novo = []
+        for _d, _g in _rt_o.groupby('DT', sort=False):
+            _vs = list(dict.fromkeys(_g['Vessel']))
+            _novo += [{'DT': _d.strftime('%Y-%m-%d %H:%M'), 'Vessel': _v, 'pos': str(_i)} for _i, _v in enumerate(_vs, 1)]
+        _novo = pd.DataFrame(_novo)
+        _ord = pd.concat([_ord[~_ord['DT'].isin(set(_novo['DT']))], _novo], ignore_index=True)
+        _ord = _ord[pd.to_datetime(_ord['DT'], errors='coerce') >= _agora_o - pd.Timedelta(days=60)]
+        try:
+            _ord.sort_values(['DT', 'pos']).to_csv(ORDEM, index=False, encoding='utf-8-sig')
+        except Exception as _e:
+            print(f'[ordem] ordem_ao_vivo.csv não gravado: {_e}')
+_ORD_POS = {(pd.Timestamp(a), str(b).strip()): int(c) for a, b, c in zip(_ord['DT'], _ord['Vessel'], _ord['pos'])}
+
+
 def _completar_dois_praticos(d):
     """Navio de 2 práticos que veio com uma linha só (ainda sem práticos definidos na
     pauta): duplica a linha para que entrem as duas manobras."""
@@ -131,6 +159,12 @@ else:   # sem histórico: usa a pauta montada pelo ep_atualizar.py
                              format='%d/%m/%Y %H:%M', errors='coerce')
     p['Vessel'] = p['Vessel'].astype(str).str.strip()
 p = p.dropna(subset=['DT']).sort_values('DT', kind='stable').reset_index(drop=True)
+# mesmo horário: ordem guardada da pauta ao vivo; sem registro, mantém a ordem que veio
+p['_ord'] = [_ORD_POS.get((d, str(v).strip()), 1000 + i) for i, (d, v) in enumerate(zip(p['DT'], p['Vessel']))]
+_n_reord = int(sum(1 for (d, v) in zip(p['DT'], p['Vessel']) if (d, str(v).strip()) in _ORD_POS))
+p = p.sort_values(['DT', '_ord'], kind='stable').drop(columns='_ord').reset_index(drop=True)
+if _n_reord:
+    print(f'[ordem] {_n_reord} manobra(s) no mesmo horário na ordem da pauta ao vivo')
 p['De'] = p['De'].astype(str).str.strip(); p['Para'] = p['Para'].astype(str).str.strip()
 p['Termino'] = p['Termino'].where(p['Termino'].notna(), '').astype(str).replace('nan', '')
 print(f'[pauta] {len(p)} manobras, {p.DT.min():%d/%m/%Y} a {p.DT.max():%d/%m/%Y %H:%M}')
