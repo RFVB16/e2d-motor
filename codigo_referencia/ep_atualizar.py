@@ -582,7 +582,7 @@ def ler_planilha():
 _ALERTAS_PAINEL = []
 
 def conferir_fila(manobras):
-    """Alertas: escalação com mais de 12 nomes ou com sigla repetida (últimos 2 dias e futuras), e os
+    """Alertas: escalação com mais de 12 nomes ou com sigla repetida (últimos 2 dias até 24 h à frente), e os
     alertas da escala gravados pelo gerar_2026.py (ao_vivo/alertas_escala.json)."""
     import re as _re, json as _json
     out = []
@@ -593,10 +593,13 @@ def conferir_fila(manobras):
     except Exception as e:
         out.append(f'alertas da escala não lidos: {e}')
     lim = datetime.now() - timedelta(days=2)
+    # 06/11/2026: só até 24 h à frente. Mais longe a pauta futura tem dias inteiros sem manobra, a troca de
+    # turno não acontece na projeção e a fila sai misturada (ex.: 10/11 com 13 nomes) — não é erro da escala.
+    lim_fut = datetime.now() + timedelta(hours=24)
     vistos = set()
     for m in manobras:
         try:
-            if m['datetime'] < lim or not m.get('escalacao'):
+            if m['datetime'] < lim or m['datetime'] > lim_fut or not m.get('escalacao'):
                 continue
         except Exception:
             continue
