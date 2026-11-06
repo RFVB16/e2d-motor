@@ -858,7 +858,7 @@ OBS_FOLGA_MIN = 15      # B com menos que isso entre o fim previsto da A (+ lanc
 OBS_JANELA_MIN = 60     # a escalação acontece 1 h antes da manobra
 OBS_DENTRO_T_MIN = 0    # na escalação, a manobra anterior ainda não terminou pelo T (31/10/2026; antes: mais de 30 min, só na B)
 
-def _simular_margem_extra(p, ini_ant, dt_m, navio_m):
+def _simular_margem_extra(p, ini_ant, dt_m, navio_m, orig=None):
     """Roda o motor de novo com +60 min na disponibilidade do prático p depois da manobra que começou em ini_ant
     (variável ATRASO do motor) e devolve (quem fica com a manobra navio_m/dt_m, próxima manobra de p).
     Usa os mesmos arquivos da última simulação do gerar_2026.py e grava só em arquivos temporários."""
@@ -877,7 +877,10 @@ def _simular_margem_extra(p, ini_ant, dt_m, navio_m):
     d = d[pd.to_numeric(d['Seq'], errors='coerce').notna() & d['Pratico'].notna()].copy()
     d['dt'] = pd.to_datetime(d['Data'].astype(str) + ' ' + d['Hora'].astype(str).str[:5], format='%d/%m/%Y %H:%M', errors='coerce')
     d['nav'] = d['Navio'].astype(str).str.strip(); d['p'] = d['Pratico'].astype(str).str.strip()
-    sub = '/'.join(d[(d.dt == dt_m) & (d.nav == navio_m)].p)
+    novos = list(d[(d.dt == dt_m) & (d.nav == navio_m)].p)
+    antes = [x for x in str(orig or '').split('/') if x.strip()]
+    entram = [x for x in novos if x not in antes]
+    sub = '/'.join(entram) if entram else '/'.join(x for x in novos if x != p)
     q = d[(d.p == p) & (d.dt > ini_ant)].sort_values('dt')
     prox = (q.dt.iat[0], q.nav.iat[0], str(q['Status'].iat[0]).strip()) if len(q) else None
     return sub, prox
@@ -966,15 +969,16 @@ def marcar_observacao(manobras):
     for _p, _ant, _m, _txt in _casos_margem[:4]:
         try:
             _r = _simular_margem_extra(_p, pd.Timestamp(_ant['datetime']), pd.Timestamp(_m['datetime']),
-                                       str(_m['vessel']).strip())
+                                       str(_m['vessel']).strip(), _m.get('pratico', ''))
         except Exception as _e:
             _r = None
             print(f'[Margem extra] simulação falhou para {_p}: {_e}')
         if _r:
             _sub, _prox = _r
-            _add = f'. Se pedir: {str(_m["vessel"]).strip()} {pd.Timestamp(_m["datetime"]):%H:%M} fica com {_sub or "?"}'
-            _add += (f'; ele seguiria para {_prox[1]} {_prox[0]:%d/%m %H:%M} ({_prox[2]})' if _prox
-                     else '; ele não teria outra manobra na pauta atual')
+            _add = (f'§SE_PEDIR§Se pedir: o {str(_m["vessel"]).strip()} {pd.Timestamp(_m["datetime"]):%H:%M} passa para {_sub or "?"}'
+                    f' e {_p} fica com ')
+            _add += (f'{_prox[1]} {_prox[0]:%d/%m %H:%M} ({_prox[2]}), pela pauta atual.' if _prox
+                     else 'nenhuma outra manobra na pauta atual.')
             _lst = _ant.get('obs_e2d') or []
             if _txt in _lst:
                 _lst[_lst.index(_txt)] = _txt + _add
@@ -2284,8 +2288,10 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
                 cab, det = (o.split(':', 1) + [''])[:2] if ':' in o else (o, '')
                 quem = cab[cab.find('(') + 1:cab.find(')')] if '(' in cab and ')' in cab else ''
                 quem = f' ({quem})' if quem else ''
+                det, _, prev = det.partition('§SE_PEDIR§')
                 return (f'Margem extra possível{quem}: {det.strip()}. Se ainda estiver a bordo, pode pedir +1 h '
-                        f'na disponibilidade para essa próxima manobra, mantendo a posição na fila.')
+                        f'na disponibilidade para essa próxima manobra, mantendo a posição na fila.'
+                        + (f' {prev.strip()}' if prev else ''))
             _sinais = ''
             for _simb, _lst, _f in (('⚠', _atr, _explica), ('M', _mex, _marg)):
                 if not _lst:

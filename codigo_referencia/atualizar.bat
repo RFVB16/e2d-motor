@@ -19,6 +19,18 @@ set "PUBLICO=%USERPROFILE%\ep-santos-publico"
 
 cd /d "%PROJETO%"
 
+REM 05/11/2026: nao roda duas atualizacoes ao mesmo tempo (uma le arquivo que a outra esta gravando)
+set "LOCK=%PROJETO%\atualizando.lock"
+if exist "%LOCK%" (
+    powershell -NoProfile -Command "if(((Get-Date)-(Get-Item -LiteralPath $env:LOCK).LastWriteTime).TotalMinutes -lt 15){exit 1}else{exit 0}"
+    if errorlevel 1 (
+        echo [AVISO] Ja existe uma atualizacao rodando. Aguarde uns minutos e tente de novo.
+        if /i not "%~1"=="auto" pause
+        exit /b 0
+    )
+)
+echo %date% %time%> "%LOCK%"
+
 echo.
 echo ====================================================
 echo  ATUALIZAR PAINEL EP - Local + Online
@@ -33,7 +45,7 @@ if errorlevel 1 (
     echo.
     echo [ERRO] Falha em ep_atualizar.py. Abortando.
     if /i not "%~1"=="auto" (pause) else (timeout /t 5 /nobreak >nul)
-    exit /b 1
+    del /f /q "%LOCK%" >nul 2>&1 & exit /b 1
 )
 
 echo.
@@ -46,7 +58,7 @@ REM 2. Verifica se ep_painel.html existe
 if not exist "%PROJETO%\ep_painel.html" (
     echo [ERRO] ep_painel.html nao foi gerado.
     if /i not "%~1"=="auto" (pause) else (timeout /t 5 /nobreak >nul)
-    exit /b 1
+    del /f /q "%LOCK%" >nul 2>&1 & exit /b 1
 )
 
 REM Modo manual: abre o painel local logo que ele fica pronto (05/11/2026), mesmo que a publicacao falhe depois
@@ -90,7 +102,7 @@ git commit --allow-empty -m "Painel %_TS%" >nul 2>&1
 if errorlevel 1 (
     echo [ERRO] Falha no commit. Veja: cd "%PUBLICO%" e rode git status
     if /i not "%~1"=="auto" pause
-    exit /b 1
+    del /f /q "%LOCK%" >nul 2>&1 & exit /b 1
 )
 
 echo [4/4] Enviando pro GitHub...
@@ -99,7 +111,7 @@ if errorlevel 1 (
     echo.
     echo [ERRO] Falha no push. Verifique sua conexao.
     if /i not "%~1"=="auto" (pause) else (timeout /t 5 /nobreak >nul)
-    exit /b 1
+    del /f /q "%LOCK%" >nul 2>&1 & exit /b 1
 )
 
 echo.
@@ -116,8 +128,9 @@ REM 5. Repositorio do motor (GitHub privado): envia o codigo se mudou. Nao inter
 call "%PROJETO%\sincronizar_repo.bat"
 
 REM Modo automatico (agendador): nao abre o navegador nem espera
-if /i "%~1"=="auto" exit /b 0
+if /i "%~1"=="auto" (del /f /q "%LOCK%" >nul 2>&1 & exit /b 0)
 
 REM (o painel local ja foi aberto logo depois de gerado)
 
 timeout /t 3 /nobreak >nul
+del /f /q "%LOCK%" >nul 2>&1
