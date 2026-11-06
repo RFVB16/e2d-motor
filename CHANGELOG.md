@@ -1,5 +1,9 @@
 # Histórico de versões
 
+## 05/11/2026
+- **Margem extra (regra aprovada, a implementar):** prático escalado ainda a bordo da A e dentro do T da tabela pode pedir +1 h na disponibilidade, mantendo a posição na fila (02, 5.18).
+- **Painel (já em produção), ainda não no código de referência:** lancha por distância (Atalaia → berço a 20 nós; embarque 12 min, desembarque 8 min), nova tabela de T das mudanças (mínimo 5 manobras por par, senão terminal, depois zona com P60), EMB-1/2 e 37.2 no cadastro de zonas. O `codigo_referencia` e o `testes/esperado` continuam com a regra anterior até serem atualizados.
+
 ## 03/11/2026
 - **Tampermonkey v1.5, login automático:** quando a sessão do SPPilots cai, o login é refeito como na tela (formulário de verdade, o navegador grava o cookie novo), depois abre o contexto OPR e a pauta. Nova tentativa a cada 3 min, sem limite; a senha não é mais apagada sozinha e só é pedida com a página visível. Antes, o login pelo fetch dizia "ok" mas a pauta continuava sem sessão e a página ficava parada em "nova tentativa" (03).
 - **Pauta sem depender do Chrome:** se a pauta enviada pelo Tampermonkey tiver mais de 8 min, a atualização entra no SPPilots com o próprio login e baixa a página da pauta (psh.asp), gravando pauta_rt.csv no mesmo formato do Tampermonkey (conferido byte a byte com a mesma página). O Chrome continua funcionando como antes; a validação da pauta (29/10) vale para as duas origens (03).

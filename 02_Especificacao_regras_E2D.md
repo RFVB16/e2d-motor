@@ -681,6 +681,25 @@ Implementação no protótipo:
 
 ---
 
+### 5.18 Margem extra (aprovada em 05/11/2026; ainda não implementada no código de referência)
+
+**Para que serve:** evitar que a manobra seguinte atrase quando a anterior ainda não terminou na hora da escalação, sem abrir espaço para manipulação. Vale para a **B** (escalado ainda na A) e também para a **A** (escalado ainda na B do ciclo anterior; caso raro, ~9 em 10 meses de 2026) — decisão do Rodrigo em 05/11/2026.
+
+**Regra:**
+1. A escalação continua 1 h antes do início da manobra, pela fila normal (§4.4).
+2. O prático escalado **pode pedir margem extra** se, no momento da escalação, as duas condições valem ao mesmo tempo:
+   - ele **ainda está a bordo** do navio da manobra anterior (a A, ou a B do ciclo anterior); e
+   - a escalação acontece **até o fim previsto da manobra anterior pela tabela**: início dela + T, sem nenhum acréscimo (janela = T; decisão do Rodrigo em 05/11/2026).
+3. **Efeito do pedido:** a disponibilidade dele ganha **+1 h** (a conta de §3.11 mais 60 min) e ele **mantém a posição na fila**. A manobra vai para o próximo prático disponível, pela regra normal.
+4. Fora dessas condições (a manobra anterior já passou do T pela tabela, ou o prático já desembarcou) **não há margem extra**: vale a escalação normal.
+5. Não muda as margens (45 min antes de entrada, 25 min antes de saída ou mudança). Atraso de até 10 min é tolerado.
+
+**Por que a janela é o T:** o T é tempo de tabela, conhecido por todos antes da manobra. Quem prolongar a A de propósito só ganha o direito se a escalação cair dentro do T, e o custo é perder 1 h de descanso. Prolongar dentro do T é ajuste pessoal, não atraso.
+
+**Dados para o sistema:** o pedido é registrado pelo operador (prático, manobra recusada, horário do pedido). Fica no log, para acompanhar a frequência. No painel, a oportunidade aparece como **M** na coluna PRT (06, 6.5).
+
+**Pedidos repetidos:** o prático pode pedir **quantas vezes quiser**, desde que, em cada escalação, as duas condições do item 2 continuem valendo (a bordo e dentro do T). Cada pedido soma +1 h à disponibilidade dele naquele momento (decisão do Rodrigo, 05/11/2026).
+
 ## 6. Saída
 
 ### 6.1 Planilha do motor (`E2D_OUT`, aba `E2D 2025`)

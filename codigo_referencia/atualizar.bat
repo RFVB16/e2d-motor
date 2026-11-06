@@ -32,7 +32,7 @@ python ep_atualizar.py
 if errorlevel 1 (
     echo.
     echo [ERRO] Falha em ep_atualizar.py. Abortando.
-    timeout /t 5 /nobreak >nul
+    if /i not "%~1"=="auto" (pause) else (timeout /t 5 /nobreak >nul)
     exit /b 1
 )
 
@@ -45,9 +45,12 @@ echo.
 REM 2. Verifica se ep_painel.html existe
 if not exist "%PROJETO%\ep_painel.html" (
     echo [ERRO] ep_painel.html nao foi gerado.
-    timeout /t 5 /nobreak >nul
+    if /i not "%~1"=="auto" (pause) else (timeout /t 5 /nobreak >nul)
     exit /b 1
 )
+
+REM Modo manual: abre o painel local logo que ele fica pronto (05/11/2026), mesmo que a publicacao falhe depois
+if /i not "%~1"=="auto" start "" "%PROJETO%\ep_painel.html"
 
 REM 3. Copia para pasta publica
 echo [2/4] Copiando painel para pasta publica...
@@ -69,7 +72,14 @@ REM Volta o marcador para a ultima versao enviada ao GitHub (origin/main) e segu
 git rev-parse --verify -q HEAD >nul 2>&1
 if errorlevel 1 (
     echo [AVISO] Marcador da versao do site corrompido - voltando para a ultima versao enviada...
-    for /f "usebackq delims=" %%a in (".git\refs\remotes\origin\main") do echo %%a> .git\refs\heads\main
+    REM 05/11/2026: os dois marcadores podem estar zerados; pega a versao certa direto do GitHub
+    set "_OK="
+    for /f "tokens=1" %%a in ('git ls-remote origin refs/heads/main 2^>nul') do (
+        >.git\refs\heads\main echo %%a
+        >.git\refs\remotes\origin\main echo %%a
+        set "_OK=1"
+    )
+    if not defined _OK for /f "usebackq delims=" %%a in (".git\refs\remotes\origin\main") do echo %%a> .git\refs\heads\main
     git fetch origin >nul 2>&1
     git reset origin/main >nul 2>&1
 )
@@ -79,6 +89,7 @@ for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd_HH:m
 git commit --allow-empty -m "Painel %_TS%" >nul 2>&1
 if errorlevel 1 (
     echo [ERRO] Falha no commit. Veja: cd "%PUBLICO%" e rode git status
+    if /i not "%~1"=="auto" pause
     exit /b 1
 )
 
@@ -87,7 +98,7 @@ git push origin main
 if errorlevel 1 (
     echo.
     echo [ERRO] Falha no push. Verifique sua conexao.
-    timeout /t 5 /nobreak >nul
+    if /i not "%~1"=="auto" (pause) else (timeout /t 5 /nobreak >nul)
     exit /b 1
 )
 
@@ -107,7 +118,6 @@ call "%PROJETO%\sincronizar_repo.bat"
 REM Modo automatico (agendador): nao abre o navegador nem espera
 if /i "%~1"=="auto" exit /b 0
 
-REM Abre o painel local no browser
-start "" "%PROJETO%\ep_painel.html"
+REM (o painel local ja foi aberto logo depois de gerado)
 
 timeout /t 3 /nobreak >nul

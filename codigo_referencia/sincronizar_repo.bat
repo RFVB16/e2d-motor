@@ -38,6 +38,24 @@ if exist "%PAC%" (
 )
 
 cd /d "%REPO%"
+REM 05/11/2026: se o marcador da versao corromper (computador desligou no meio), volta para a versao do GitHub
+git rev-parse --verify -q HEAD >nul 2>&1
+if errorlevel 1 (
+  echo [Repositorio] AVISO: marcador da versao corrompido - voltando para a versao do GitHub...
+  for /f "tokens=1" %%a in ('git ls-remote origin refs/heads/main 2^>nul') do (
+    >.git\refs\heads\main echo %%a
+    >.git\refs\remotes\origin\main echo %%a
+  )
+  git fetch origin >nul 2>&1
+  git reset origin/main >nul 2>&1
+)
+REM Indice do git corrompido (mesmo motivo): reconstroi
+git status >nul 2>&1
+if errorlevel 1 (
+  echo [Repositorio] AVISO: indice do git corrompido - reconstruindo...
+  del /f /q ".git\index" >nul 2>&1
+  git reset >nul 2>&1
+)
 git add -A codigo_referencia testes .gitignore ":(glob)*.md" >nul 2>&1
 git diff --cached --quiet
 if not errorlevel 1 (

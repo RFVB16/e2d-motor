@@ -858,6 +858,31 @@ OBS_FOLGA_MIN = 15      # B com menos que isso entre o fim previsto da A (+ lanc
 OBS_JANELA_MIN = 60     # a escalação acontece 1 h antes da manobra
 OBS_DENTRO_T_MIN = 0    # na escalação, a manobra anterior ainda não terminou pelo T (31/10/2026; antes: mais de 30 min, só na B)
 
+def _simular_margem_extra(p, ini_ant, dt_m, navio_m):
+    """Roda o motor de novo com +60 min na disponibilidade do prático p depois da manobra que começou em ini_ant
+    (variável ATRASO do motor) e devolve (quem fica com a manobra navio_m/dt_m, próxima manobra de p).
+    Usa os mesmos arquivos da última simulação do gerar_2026.py e grava só em arquivos temporários."""
+    M = _DIR / 'motor_e2d'
+    env = dict(os.environ, PAUTA_FILE=str(M / '_pauta_live.xlsx'), ESP_FONTE=str(M / '_especiais_live.xlsx'),
+               TURNOS=str(M / '_turnos_live.pkl'), MARGEM_ENTRADA=os.environ.get('MARGEM_ENTRADA', '45'),
+               MARGEM_OUTRAS=os.environ.get('MARGEM_OUTRAS', '25'), E2D_OUT='_margem_extra_tmp.xlsx',
+               FB_OUT=str(M / '_margem_extra_fb.pkl'), PYTHONIOENCODING='utf-8', BTP_OV=str(M / '_giro_T.pkl'),
+               FROZEN=str(M / '_congeladas.pkl'), CANCEL=str(M / '_canceladas.pkl'),
+               CONG_FORA_OUT=str(M / '_margem_extra_cf.pkl'), ATRASO=f'{p}|{ini_ant:%Y-%m-%d %H:%M}|60')
+    r = subprocess.run([sys.executable, 'motor_e2d.py'], cwd=str(M), env=env, capture_output=True,
+                       text=True, encoding='utf-8', errors='replace', timeout=240)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr[-300:])
+    d = pd.read_excel(M / '_margem_extra_tmp.xlsx')
+    d = d[pd.to_numeric(d['Seq'], errors='coerce').notna() & d['Pratico'].notna()].copy()
+    d['dt'] = pd.to_datetime(d['Data'].astype(str) + ' ' + d['Hora'].astype(str).str[:5], format='%d/%m/%Y %H:%M', errors='coerce')
+    d['nav'] = d['Navio'].astype(str).str.strip(); d['p'] = d['Pratico'].astype(str).str.strip()
+    sub = '/'.join(d[(d.dt == dt_m) & (d.nav == navio_m)].p)
+    q = d[(d.p == p) & (d.dt > ini_ant)].sort_values('dt')
+    prox = (q.dt.iat[0], q.nav.iat[0], str(q['Status'].iat[0]).strip()) if len(q) else None
+    return sub, prox
+
+
 def marcar_observacao(manobras):
     """Marca m['obs_e2d'] (lista de motivos) nas manobras que merecem observação:
        1) B apertada (risco de atraso): pouca folga entre o fim previsto da A do mesmo prático e a B;
@@ -911,6 +936,7 @@ def marcar_observacao(manobras):
     # 2) risco de manipulação (critério do estudo "escalados dentro do T"): na escalação da B
     #    (1 h antes), o prático ainda está na A com mais de 30 min pela frente (fim da A pelo T).
     ult = {}
+    _casos_margem = []
     for m in ordem:
         dt = pd.Timestamp(m['datetime'])
         for p in pr(m):
@@ -925,11 +951,33 @@ def marcar_observacao(manobras):
                     fimA = pd.Timestamp(ant['datetime']) + pd.Timedelta(minutes=T)
                     resta = (fimA - (dt - pd.Timedelta(minutes=OBS_JANELA_MIN))).total_seconds() / 60
                     if resta > OBS_DENTRO_T_MIN:
-                        m['obs_e2d'].append(f'dentro do T ({p}): na escalação (1 h antes) ainda faltavam {resta:.0f} min '
-                                            f'para o fim previsto da manobra anterior ({str(ant["vessel"]).strip()} {pd.Timestamp(ant["datetime"]):%H:%M})')
+                        # 05/11/2026: o M fica na manobra em que o prático está a bordo (onde ele pede a margem extra),
+                        # e o texto diz para qual manobra ele foi escalado
+                        _txt_m = (f'dentro do T ({p}): escalado para {str(m["vessel"]).strip()} {dt:%H:%M} quando ainda faltavam '
+                                  f'{resta:.0f} min para o fim previsto desta manobra')
+                        ant.setdefault('obs_e2d', []).append(_txt_m)
+                        if dt > now:   # escalação valendo agora: simular o pedido de margem extra
+                            _casos_margem.append((p, ant, m, _txt_m))
                 except Exception:
                     pass
             ult[p] = m
+    # 05/11/2026: para cada M com a escalação valendo agora, simula o pedido (+1 h na disponibilidade dele)
+    # e mostra quem fica com a manobra e para onde ele vai
+    for _p, _ant, _m, _txt in _casos_margem[:4]:
+        try:
+            _r = _simular_margem_extra(_p, pd.Timestamp(_ant['datetime']), pd.Timestamp(_m['datetime']),
+                                       str(_m['vessel']).strip())
+        except Exception as _e:
+            _r = None
+            print(f'[Margem extra] simulação falhou para {_p}: {_e}')
+        if _r:
+            _sub, _prox = _r
+            _add = f'. Se pedir: {str(_m["vessel"]).strip()} {pd.Timestamp(_m["datetime"]):%H:%M} fica com {_sub or "?"}'
+            _add += (f'; ele seguiria para {_prox[1]} {_prox[0]:%d/%m %H:%M} ({_prox[2]})' if _prox
+                     else '; ele não teria outra manobra na pauta atual')
+            _lst = _ant.get('obs_e2d') or []
+            if _txt in _lst:
+                _lst[_lst.index(_txt)] = _txt + _add
     # limpa registros antigos e grava
     reg = {k: r for k, r in reg.items() if pd.Timestamp(r['dt']) > now - pd.Timedelta(days=3)}
     reg_p.write_text(json.dumps(reg, ensure_ascii=False, indent=0), encoding='utf-8')
@@ -2229,11 +2277,24 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
                 if o.startswith('B apertada'):
                     return f'Risco de atraso{quem}: pouco tempo entre o fim previsto da A e esta manobra. {det.strip()}'
                 return f'Escalado ainda em manobra{quem}: {det.strip()}'
-            _txt = ' | '.join(_explica(o) for o in _obs)
-            _tit = _html.escape(_txt)
-            ep_cell = ep_cell.replace('</td>', f'<span class="obsx" tabindex="0" title="{_tit}" '
-                                               f'onclick="this.classList.toggle(\'open\')">⚠'
-                                               f'<span class="obsx-txt">{_tit}</span></span></td>', 1)
+            # 05/11/2026: "escalado ainda em manobra" = oportunidade de margem extra → M; ⚠ fica só para risco de atraso
+            _atr = [o for o in _obs if o.startswith('B apertada')]
+            _mex = [o for o in _obs if not o.startswith('B apertada')]
+            def _marg(o):
+                cab, det = (o.split(':', 1) + [''])[:2] if ':' in o else (o, '')
+                quem = cab[cab.find('(') + 1:cab.find(')')] if '(' in cab and ')' in cab else ''
+                quem = f' ({quem})' if quem else ''
+                return (f'Margem extra possível{quem}: {det.strip()}. Se ainda estiver a bordo, pode pedir +1 h '
+                        f'na disponibilidade para essa próxima manobra, mantendo a posição na fila.')
+            _sinais = ''
+            for _simb, _lst, _f in (('⚠', _atr, _explica), ('M', _mex, _marg)):
+                if not _lst:
+                    continue
+                _tit = _html.escape(' | '.join(_f(o) for o in _lst))
+                _sinais += (f'<span class="obsx" tabindex="0" title="{_tit}" '
+                            f'onclick="this.classList.toggle(\'open\')">{_simb}'
+                            f'<span class="obsx-txt">{_tit}</span></span>')
+            ep_cell = ep_cell.replace('</td>', _sinais + '</td>', 1)
 
         _inv = m.get('inviavel')
         if _inv is not None and not is_past:
@@ -2551,7 +2612,7 @@ document.addEventListener('DOMContentLoaded',function(){{try{{if(localStorage.ge
       <table id="projtab" class="hide-esc">
         <thead><tr>
           <th>Navio</th><th>Local</th><th>Horário</th>
-          <th title="⚠ = em observação (manobras confirmadas, a partir da escalação 1 h antes): risco de atraso, ou escalado ainda em manobra (a anterior ainda não terminou pelo T na escalação). Toque no ⚠ para ver o motivo.">PRT</th><th>Calado</th><th>Bordo</th><th>A/B</th><th title="Na A (amarelo): descanso, do fim da manobra anterior (início + T + lancha até a Atalaia) até o início da A — o mesmo do relatório. Na B: tempo livre na Atalaia, da chegada depois da A (início + T + lancha) até a saída para a B (início da B − lancha até o embarque)">Δt</th><th class="esc-col">Escalação</th>
+          <th title="⚠ = risco de atraso (pouco tempo entre o fim previsto da A e a B). M (na manobra em que o prático está a bordo) = margem extra possível: ele foi escalado para a próxima manobra (1 h antes dela) ainda dentro do T desta; se ainda estiver a bordo, pode pedir +1 h. Só manobras confirmadas. Toque no símbolo para ver o motivo.">PRT</th><th>Calado</th><th>Bordo</th><th>A/B</th><th title="Na A (amarelo): descanso, do fim da manobra anterior (início + T + lancha até a Atalaia) até o início da A — o mesmo do relatório. Na B: tempo livre na Atalaia, da chegada depois da A (início + T + lancha) até a saída para a B (início da B − lancha até o embarque)">Δt</th><th class="esc-col">Escalação</th>
         </tr></thead>
         <tbody>{proj_html}</tbody>
       </table>
