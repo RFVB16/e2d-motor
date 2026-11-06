@@ -61,7 +61,8 @@ h = _ler_csv(HIST); rt = _ler_csv(RT)
 
 # 06/11/2026 (Rodrigo): manobras no MESMO horário seguem a ordem da pauta ao vivo do SPPilots (a numeração
 # põe a mais curta primeiro: quem está na frente da fila vai nela). O histórico não respeita essa ordem.
-# Guardamos a ordem da pauta ao vivo até a hora da escalação (início − 1 h) e usamos ela também depois.
+# Guardamos a ordem da pauta ao vivo enquanto o navio aparece nela (vale a última vista) e usamos ela também
+# depois que a manobra sai da pauta ao vivo. O vermelho tem que bater com a pauta real (06/11/2026).
 ORDEM = DIR / 'dados' / 'ordem_ao_vivo.csv'
 try:
     _ord = pd.read_csv(ORDEM, encoding='utf-8-sig', dtype=str) if ORDEM.exists() else pd.DataFrame(columns=['DT', 'Vessel', 'pos'])
@@ -69,7 +70,7 @@ except Exception as _e:
     print(f'[ordem] ordem_ao_vivo.csv não lido: {_e}'); _ord = pd.DataFrame(columns=['DT', 'Vessel', 'pos'])
 if not rt.empty:
     _agora_o = pd.Timestamp(dt.datetime.now())
-    _rt_o = rt[rt.DT - pd.Timedelta(hours=1) > _agora_o]          # ainda antes da escalação: a ordem pode mudar
+    _rt_o = rt
     _n_o = _rt_o.groupby('DT')['Vessel'].transform('nunique')
     _rt_o = _rt_o[_n_o >= 2]
     if len(_rt_o):
@@ -522,17 +523,6 @@ def _inconsistencia():
     # Manobras anteriores à última mudança de regra foram escaladas pela regra antiga: não contam aqui
     # (senão a regra nova acusaria o passado de 'fora da vez' e refaria escalações já cumpridas).
     L = [x for x in L if x[0] >= REGRA_DESDE]
-    # 06/11/2026: troca entre manobras do MESMO horário não é erro — a ordem de navios no mesmo horário
-    # muda quando a manobra passa da pauta ao vivo para o histórico. Se o "da vez" está congelado em outra
-    # manobra do mesmo horário, os dois só trocaram de navio: não conta.
-    try:
-        _cgt = _cg.assign(_dt=pd.to_datetime(_cg['DT'], errors='coerce'))
-        _mesmo = {}
-        for _d, _v, _p in zip(_cgt['_dt'], _cgt['Vessel'].astype(str).str.strip(), _cgt['Pratico'].astype(str).str.strip()):
-            _mesmo.setdefault(_d, []).append((_v, _p))
-        L = [x for x in L if not any(_p == x[3] and _v != str(x[1]).strip() for _v, _p in _mesmo.get(pd.Timestamp(x[0]), []))]
-    except Exception as _e:
-        print(f'[conferência] filtro de troca no mesmo horário falhou: {_e}')
     graves = [x for x in L if (not x[6]) or x[5] >= 4]
     ini = min([x[0] for x in graves], default=None)
     for x in L:      # 3 ou mais no mesmo período de 48 h
