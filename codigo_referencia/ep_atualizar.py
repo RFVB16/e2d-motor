@@ -2444,20 +2444,7 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
         alerta_html = ('<div style="background:#c0392b;color:#fff;padding:10px 16px;font-weight:700;font-size:15px">'
                        '⚠ ERRO NA ESCALA — conferir antes de usar o painel<ul style="margin:6px 0 0 18px;font-weight:400">'
                        + _li + '</ul></div>')
-    # Aviso: T automático de navio de passageiros que mudou nos últimos 7 dias (regra de 06/11/2026)
-    try:
-        _fm = _DIR / 'dados' / 'T_passageiros_mudancas.csv'
-        if _fm.exists():
-            _mm = pd.read_csv(_fm, dtype=str, encoding='utf-8-sig').fillna('')
-            _mm = _mm[pd.to_datetime(_mm.quando, errors='coerce') >= pd.Timestamp.now() - pd.Timedelta(days=7)]
-            if len(_mm):
-                _tn = {'E': 'entrada', 'S': 'saída'}
-                _li = ''.join(f"<li>{r.Navio}, {_tn.get(r.Tipo, r.Tipo)} no {r.Berco}: T {r.T_antes} → {r.T_novo} min "
-                              f"(manobras: {r.valores} min) — {pd.Timestamp(r.quando):%d/%m %H:%M}</li>" for r in _mm.itertuples())
-                alerta_html += ('<div style="background:#1f6fb2;color:#fff;padding:8px 16px;font-size:13px">'
-                                'ℹ T automático de navio de passageiros atualizado<ul style="margin:4px 0 0 18px">' + _li + '</ul></div>')
-    except Exception as _e:
-        print(f'[Passageiros] aviso no painel não montado: {_e}')
+    # T automático de navio de passageiros: só no registro interno dados\T_passageiros_mudancas.csv (Rodrigo, 06/11/2026: não mostrar no painel)
     html = f'''<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
