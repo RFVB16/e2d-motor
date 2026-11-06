@@ -858,32 +858,56 @@ OBS_FOLGA_MIN = 15      # B com menos que isso entre o fim previsto da A (+ lanc
 OBS_JANELA_MIN = 60     # a escalação acontece 1 h antes da manobra
 OBS_DENTRO_T_MIN = 0    # na escalação, a manobra anterior ainda não terminou pelo T (31/10/2026; antes: mais de 30 min, só na B)
 
-def _simular_margem_extra(p, ini_ant, dt_m, navio_m, orig=None):
-    """Roda o motor de novo com +60 min na disponibilidade do prático p depois da manobra que começou em ini_ant
-    (variável ATRASO do motor) e devolve (quem fica com a manobra navio_m/dt_m, próxima manobra de p).
-    Usa os mesmos arquivos da última simulação do gerar_2026.py e grava só em arquivos temporários."""
+def _simular_margem_extra_varios(casos):
+    """casos: lista de (p, ini_ant, dt_m, navio_m, orig). Para cada um, roda o motor de novo com +60 min na
+    disponibilidade do prático p depois da manobra que começou em ini_ant (variável ATRASO do motor) e devolve
+    (quem entra no lugar dele na manobra navio_m/dt_m, próxima manobra de p) ou None.
+    Os casos rodam ao mesmo tempo (o motor leva 1–2 min no PC). Usa os arquivos da última simulação do
+    gerar_2026.py e grava só em arquivos temporários (_margem_extra_*)."""
     M = _DIR / 'motor_e2d'
-    env = dict(os.environ, PAUTA_FILE=str(M / '_pauta_live.xlsx'), ESP_FONTE=str(M / '_especiais_live.xlsx'),
-               TURNOS=str(M / '_turnos_live.pkl'), MARGEM_ENTRADA=os.environ.get('MARGEM_ENTRADA', '45'),
-               MARGEM_OUTRAS=os.environ.get('MARGEM_OUTRAS', '25'), E2D_OUT='_margem_extra_tmp.xlsx',
-               FB_OUT=str(M / '_margem_extra_fb.pkl'), PYTHONIOENCODING='utf-8', BTP_OV=str(M / '_giro_T.pkl'),
-               FROZEN=str(M / '_congeladas.pkl'), CANCEL=str(M / '_canceladas.pkl'),
-               CONG_FORA_OUT=str(M / '_margem_extra_cf.pkl'), ATRASO=f'{p}|{ini_ant:%Y-%m-%d %H:%M}|60')
-    r = subprocess.run([sys.executable, 'motor_e2d.py'], cwd=str(M), env=env, capture_output=True,
-                       text=True, encoding='utf-8', errors='replace', timeout=240)
-    if r.returncode != 0:
-        raise RuntimeError(r.stderr[-300:])
-    d = pd.read_excel(M / '_margem_extra_tmp.xlsx')
-    d = d[pd.to_numeric(d['Seq'], errors='coerce').notna() & d['Pratico'].notna()].copy()
-    d['dt'] = pd.to_datetime(d['Data'].astype(str) + ' ' + d['Hora'].astype(str).str[:5], format='%d/%m/%Y %H:%M', errors='coerce')
-    d['nav'] = d['Navio'].astype(str).str.strip(); d['p'] = d['Pratico'].astype(str).str.strip()
-    novos = list(d[(d.dt == dt_m) & (d.nav == navio_m)].p)
-    antes = [x for x in str(orig or '').split('/') if x.strip()]
-    entram = [x for x in novos if x not in antes]
-    sub = '/'.join(entram) if entram else '/'.join(x for x in novos if x != p)
-    q = d[(d.p == p) & (d.dt > ini_ant)].sort_values('dt')
-    prox = (q.dt.iat[0], q.nav.iat[0], str(q['Status'].iat[0]).strip()) if len(q) else None
-    return sub, prox
+    def _ler(f):
+        d = pd.read_excel(f)
+        d = d[pd.to_numeric(d['Seq'], errors='coerce').notna() & d['Pratico'].notna()].copy()
+        d['dt'] = pd.to_datetime(d['Data'].astype(str) + ' ' + d['Hora'].astype(str).str[:5], format='%d/%m/%Y %H:%M', errors='coerce')
+        d['nav'] = d['Navio'].astype(str).str.strip(); d['p'] = d['Pratico'].astype(str).str.strip()
+        return d
+    try:
+        _orig = _ler(M / '_E2D_live.xlsx')   # escalação atual (sem o pedido), para saber quem entra no lugar
+    except Exception:
+        _orig = None
+    procs = []
+    for i, (p, ini_ant, dt_m, navio_m, orig) in enumerate(casos):
+        env = dict(os.environ, PAUTA_FILE=str(M / '_pauta_live.xlsx'), ESP_FONTE=str(M / '_especiais_live.xlsx'),
+                   TURNOS=str(M / '_turnos_live.pkl'), MARGEM_ENTRADA=os.environ.get('MARGEM_ENTRADA', '45'),
+                   MARGEM_OUTRAS=os.environ.get('MARGEM_OUTRAS', '25'), E2D_OUT=f'_margem_extra_tmp_{i}.xlsx',
+                   FB_OUT=str(M / f'_margem_extra_fb_{i}.pkl'), PYTHONIOENCODING='utf-8', BTP_OV=str(M / '_giro_T.pkl'),
+                   FROZEN=str(M / '_congeladas.pkl'), CANCEL=str(M / '_canceladas.pkl'),
+                   CONG_FORA_OUT=str(M / f'_margem_extra_cf_{i}.pkl'), ATRASO=f'{p}|{ini_ant:%Y-%m-%d %H:%M}|60')
+        procs.append(subprocess.Popen([sys.executable, 'motor_e2d.py'], cwd=str(M), env=env,
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.PIPE))
+    res = []
+    for i, ((p, ini_ant, dt_m, navio_m, orig), pr) in enumerate(zip(casos, procs)):
+        try:
+            _, err = pr.communicate(timeout=300)
+            if pr.returncode != 0:
+                raise RuntimeError(err.decode('utf-8', 'replace')[-300:])
+            d = _ler(M / f'_margem_extra_tmp_{i}.xlsx')
+            novos = list(d[(d.dt == dt_m) & (d.nav == navio_m)].p)
+            antes = (list(_orig[(_orig.dt == dt_m) & (_orig.nav == navio_m)].p) if _orig is not None
+                     else [x for x in str(orig or '').split('/') if x.strip()])
+            entram = [x for x in novos if x not in antes]
+            if p in novos and not entram:          # o pedido não muda nada (ex.: manobra já congelada)
+                res.append(('', None)); continue
+            sub = '/'.join(entram) if entram else '?'
+            q = d[(d.p == p) & (d.dt > ini_ant)].sort_values('dt')
+            prox = (q.dt.iat[0], q.nav.iat[0], str(q['Status'].iat[0]).strip()) if len(q) else None
+            res.append((sub, prox))
+        except Exception as _e:
+            try: pr.kill()
+            except Exception: pass
+            print(f'[Margem extra] simulação falhou para {p}: {_e}')
+            res.append(None)
+    return res
 
 
 def marcar_observacao(manobras):
@@ -966,14 +990,19 @@ def marcar_observacao(manobras):
             ult[p] = m
     # 05/11/2026: para cada M com a escalação valendo agora, simula o pedido (+1 h na disponibilidade dele)
     # e mostra quem fica com a manobra e para onde ele vai
-    for _p, _ant, _m, _txt in _casos_margem[:4]:
-        try:
-            _r = _simular_margem_extra(_p, pd.Timestamp(_ant['datetime']), pd.Timestamp(_m['datetime']),
-                                       str(_m['vessel']).strip(), _m.get('pratico', ''))
-        except Exception as _e:
-            _r = None
-            print(f'[Margem extra] simulação falhou para {_p}: {_e}')
-        if _r:
+    _casos_margem = _casos_margem[:3]
+    _t0m = time.time()
+    _resm = _simular_margem_extra_varios([(_p, pd.Timestamp(_ant['datetime']), pd.Timestamp(_m['datetime']),
+                                           str(_m['vessel']).strip(), _m.get('pratico', ''))
+                                          for _p, _ant, _m, _txt in _casos_margem]) if _casos_margem else []
+    if _casos_margem:
+        print(f'[Margem extra] {len(_casos_margem)} pedido(s) simulado(s) em {time.time() - _t0m:.0f}s')
+    for (_p, _ant, _m, _txt), _r in zip(_casos_margem, _resm):
+        if _r and _r[0] == '':
+            _lst = _ant.get('obs_e2d') or []
+            if _txt in _lst:
+                _lst[_lst.index(_txt)] = _txt + '§SE_PEDIR§Se pedir: pela pauta atual, a escalação não mudaria.'
+        elif _r:
             _sub, _prox = _r
             _add = (f'§SE_PEDIR§Se pedir: o {str(_m["vessel"]).strip()} {pd.Timestamp(_m["datetime"]):%H:%M} passa para {_sub or "?"}'
                     f' e {_p} fica com ')
