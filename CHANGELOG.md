@@ -1,5 +1,9 @@
 # Histórico de versões
 
+## 06/11/2026
+- **T das mudanças, método registrado e grupos reais (02, 5.19 e A.2):** tabela de 293 pares calculada com 717 mudanças reais (2025 + jan–set/2026). Ordem: berço → berço; grupo → berço ou berço → grupo; grupo → grupo (mediana); zona → zona (P60, Z3 sul e norte); padrão. Mínimo de 5 mudanças por nível, valores arredondados para cima em múltiplos de 5, sempre no sentido da mudança. Os berços numerados deixam de ser agrupados por zona e passam aos grupos definidos pela Praticagem (29–34, 35–39, 12P–20/21, 23–OUT etc.); EMBR. passa à Z3 norte. 67 pares mudaram, nenhum em 30 min ou mais.
+- **T de navio de passageiros (02, 5.20):** 25 com entrada 75 / saída 60 para navio de passageiros; T automático por navio pelos tempos reais do SPPilots (3+ manobras, 10+ min de diferença); navio de carga fora.
+
 ## 05/11/2026
 - **Margem extra (regra aprovada, a implementar):** prático escalado ainda a bordo da A e dentro do T da tabela pode pedir +1 h na disponibilidade, mantendo a posição na fila (02, 5.18).
 - **Painel (já em produção), ainda não no código de referência:** lancha por distância (Atalaia → berço a 20 nós; embarque 12 min, desembarque 8 min), nova tabela de T das mudanças (mínimo 5 manobras por par, senão terminal, depois zona com P60), EMB-1/2 e 37.2 no cadastro de zonas. O `codigo_referencia` e o `testes/esperado` continuam com a regra anterior até serem atualizados.

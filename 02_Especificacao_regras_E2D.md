@@ -132,7 +132,7 @@ Depois: ordenação **estável** por `datetime` (a ordem original do arquivo é 
 Lida por `ep_algoritmo.carregar_dados()`:
 
 - Aba **`T Entrada ou saída`**: colunas `Berço`, `T - TEMPO (min)`, `T - TEMPO (h)`. Gera `T_min[berço] = int(T - TEMPO (min))`. Linhas com `Berço` ou T vazio são ignoradas (a última linha da aba é uma nota de texto e cai aqui). O `int()` **trunca** valores fracionários: 83,5 → 83; 127,5 → 127; 157,5 → 157; 76,5 → 76. **[Ponto de atenção]**
-- Aba **`Mudanças de entre berços`**: colunas `Mudança`, `De`, `Para`, `Tm (min)`, `Tm (h)`. Gera `T_mud[(De, Para)] = int(Tm (min))`. A chave é **direcional**: (A, B) e (B, A) são entradas distintas. Linhas sem `De`, `Para` ou `Tm` são ignoradas. Hoje são 207 pares e todos os valores são inteiros.
+- Aba **`Mudanças de entre berços`**: colunas `Mudança`, `De`, `Para`, `Tm (min)`, `Tm (h)`. Gera `T_mud[(De, Para)] = int(Tm (min))`. A chave é **direcional**: (A, B) e (B, A) são entradas distintas. Linhas sem `De`, `Para` ou `Tm` são ignoradas. Hoje são 293 pares e todos os valores são inteiros. Os valores são calculados pelo método da seção 5.19 (06/11/2026).
 - A função `carregar_dados()` também abre um arquivo de manobras de 2025 (`Manobras_2025__original_.xlsx`, procurado em `inputs/`, `.`, `..` etc.). O conteúdo é descartado pelo motor, mas **o arquivo precisa existir**, senão o motor para com erro. **[Ponto de atenção]**
 
 As tabelas completas estão no Apêndice A.
@@ -197,7 +197,7 @@ Manobra **Z5** = origem **ou** destino em Z5 (`is_z5`).
 |---|---|
 | Entrada (`fr == 'FB'`) | `T_min[to]`; se o berço não estiver na tabela, **60** |
 | Saída (`to == 'FB'`) | `T_min[fr]`; se não estiver, **60** |
-| Mudança | 1) `T_mud[(fr, to)]` se o par existir (direcional); 2) senão `TM_ZONA[(min(zona), max(zona))]`; 3) senão **60** |
+| Mudança | 1) `T_mud[(fr, to)]` se o par existir (direcional); 2) senão `TM_ZONA[(min(zona), max(zona))]`; 3) senão **60**. A tabela `T_mud` é montada pelo método da seção 5.19 e cobre todos os pares que tiveram mudança em 2025 e em jan–set/2026; o `TM_ZONA` só é usado para par que nunca ocorreu. |
 
 Observação: a ordem dos testes faz `FB → FB` cair no 1º caso (`T_min['FB']` não existe → 60). Desde 27/10/2026 o giro sem atracar (FB → FB) recebe o T das linhas `GIRO …` da tabela (5.14), passado ao motor por `BTP_OV`.
 
@@ -700,6 +700,86 @@ Implementação no protótipo:
 
 **Pedidos repetidos:** o prático pode pedir **quantas vezes quiser**, desde que, em cada escalação, as duas condições do item 2 continuem valendo (a bordo e dentro do T). Cada pedido soma +1 h à disponibilidade dele naquele momento (decisão do Rodrigo, 05/11/2026).
 
+### 5.19 Tabela de T das mudanças: método de cálculo (06/11/2026)
+
+**Para que serve.** O T de uma mudança de berço entra na disponibilidade do prático (3.11): `início + T + margem + lancha`. O motor só consulta a tabela pronta (`T_mud`, 3.7). Esta seção registra **como a tabela é calculada**, para que possa ser refeita com dados novos e conferida por qualquer pessoa.
+
+**Dados.** Todas as mudanças (nem `De` nem `Para` é `FB`) com início e término registrados:
+- 2025: `Pauta de Manobra 2025.xlsx` (início = `Data` + `Hora`; término = `Termino`, no dia seguinte se for anterior ao início);
+- jan–set/2026: `Pauta_2026_consolidada.xlsx` (coluna `Duração (min)`), sem repetir navio de 2 práticos;
+- só durações entre 10 e 400 min. Total usado em 06/11/2026: **717 mudanças** (437 de 2025 + 280 de 2026).
+
+**Grupos de berços (definidos pela Praticagem em 06/11/2026).**
+
+| Grupo | Berços |
+|---|---|
+| Cosipa | COS 2, COS 3, COS 4, TIP-2, TIP-3, TIP-4, ULT |
+| Alemoa | AL 1, AL 2, AL 3, AL 4, TRSP |
+| BTP | BTP-1, BTP-2, BTP-3 |
+| Saboó | VAL, CORTE, CS 1, CS 2, CS 3, CS 4 |
+| Ilha | IB BC, IB SP, AGEO, IB-OE |
+| Embraport | EMBR., EMB-1, EMB-2, EMB-3, EMB-4, EMB-1/2 |
+| 12P–20/21 | 12-A, 12-P, 13/14, 16/17, 19, 20/21 |
+| 23–OUT | 23, 25, OUT-1, OUT-2, OUT-3, OUT 2/3 |
+| 29–34 | 29, 29A, 29/30, 30, 31, 31/32, 32, 32/33, 33, 34 |
+| 35–39 | 35.1, 35.2, 37.1, 37.2, 38, 39 |
+| DOW–TGG | DOW, CTRLE, TEAG, TEG, TERMG, TGG |
+| Tecon | TC 1.1, TC 1.2, TC 2, TC 3, TEV |
+| SAIPEM | SAIPEM 1, SAIPEM 1/2, SAIPEM 2, SAIPEM 3 |
+
+Berço fora da lista forma um grupo só dele.
+
+**Zonas para o último nível.** As de `BERCO_ZONE` (8.1), com a **Z3 dividida em duas**, porque as distâncias são muito diferentes:
+- **Z3 sul:** grupos 12P–20/21 e 23–OUT;
+- **Z3 norte:** grupos Saboó, Ilha e Embraport.
+
+**Regra.** Para cada par direcional `De → Para`, usa-se o **primeiro nível da lista que tenha pelo menos 5 mudanças**:
+
+| Nível | Mudanças usadas | Valor |
+|---|---|---|
+| 1. berço → berço | as do próprio par, **no mesmo sentido** | mediana |
+| 2. grupo → berço ou berço → grupo | origem pelo grupo e destino exato, ou origem exata e destino pelo grupo; usa o lado que tiver **mais** mudanças | mediana |
+| 3. grupo → grupo | grupo da origem → grupo do destino | mediana |
+| 4. zona → zona | par de zonas, sem sentido (Z3 sul e norte separadas) | **P60** (valor que cobre 6 de cada 10 mudanças) |
+| 5. padrão do motor | nenhum nível com 5 mudanças | `TM_ZONA` (8.3) |
+
+- Todo valor é **arredondado para cima em múltiplos de 5 min**.
+- **Por que mediana nos níveis 1 a 3:** o grupo é parecido com o par; a mediana não é puxada por uma mudança atípica (atraso, espera de rebocador).
+- **Por que P60 na zona:** a zona mistura berços próximos e distantes; a mediana ficaria baixa para os pares mais longos.
+- **Sentido:** os níveis 1 a 3 respeitam o sentido (A → B é diferente de B → A), porque em vários pares o tempo muda com o sentido (ex.: TEV → VAL 72,5 × VAL → TEV 65; AL 4 → IB BC 75 × IB BC → AL 4 60). Somar os dois sentidos foi testado em 06/11/2026 e **não foi adotado** (decisão da Praticagem).
+- **Mudança no mesmo berço** (ex.: 33 → 33) segue a mesma regra; com menos de 5 mudanças, usa o grupo.
+- O **giro sem atracar (FB → FB)** não é mudança: continua com a regra 5.14.
+- Por que 5 e não menos: a maioria dos pares tem 1 ou 2 mudanças, e uma mudança isolada pode ter sido um atraso. Ex.: 12-A → 39 teve uma única, de 150 min; o T dele (75) vem das 8 mudanças de 12P–20/21 → 35–39.
+
+**Exemplos (tabela de 06/11/2026).**
+
+| Mudança | Mudanças do par | Nível usado | Base (mudanças) | T |
+|---|---|---|---|---|
+| 32 → EMB-4 | 30 | 1. berço → berço | o par (30) | 65 |
+| IB SP → DOW | 4 | 2. grupo → berço | Ilha → DOW (12) | 75 |
+| TIP-3 → 16/17 | 4 | 2. berço → grupo | TIP-3 → 12P–20/21 (8) | 120 |
+| EMB-3 → 34 | 3 | 3. grupo → grupo | Embraport → 29–34 (11) | 60 |
+| DOW → AL 4 | 2 | 4. zona → zona | Z2 ↔ Z4 (35) | 105 |
+| AL 3 → AL 4 | 1 | 5. padrão | Z4 ↔ Z4 só tem 4 | 80 |
+
+**Uso do T na escala.** Mudança 32 → EMB-4 às 10:00, próxima manobra do prático é saída do TC 3: disponível = r15(10:00 + 65 + 25 + 8 de lancha) = 11:45.
+
+**Resultado em 06/11/2026.** 293 pares na tabela (antes 207). Pares por nível: 35 berço → berço, 95 grupo → berço/berço → grupo, 93 grupo → grupo, 65 zona, 4 padrão. Em relação à tabela anterior (grupos por zona), 67 pares mudaram (37 subiram, 30 desceram; mediana 10 min; nenhum ≥ 30 min). Erro médio contra o término real: 10,8 → 10,7 min; mudanças que passam do T em mais de 25 min: 51 → 50.
+
+**Arquivos.**
+- Tabela usada pelo motor: `inputs\Tempo_T__2025_.xlsx` e `motor_e2d\inputs\Tempo_T__2025_.xlsx`, aba `Mudanças de entre berços` (cópias anteriores: `Tempo_T__2025__antes_mudancas.xlsx`, `Tempo_T__2025__antes_grupos.xlsx`).
+- Consulta: `estudos\T_mudancas_consulta.xlsx` — por par: T, ocorrências do par, durações reais, nível e base usados, ocorrências na base, T anterior; aba `Grupos`.
+
+**Quando refazer.** Ao incluir dados novos de término real (por exemplo, o fim de cada temporada) ou ao mudar os grupos. A tabela é fixa entre uma revisão e outra; o motor não a recalcula sozinho.
+
+### 5.20 T de navio de passageiros (06/11/2026)
+
+- **Quem é:** tipo de navio "PASSENGER" na Consulta de Serviços do SPPilots (`dados\navios_tipo.csv`), mais a lista manual `inputs\navios_passageiros.csv`.
+- **T, nesta ordem:** 1) linha com o nome do navio em `inputs\T_passageiros.csv` (manual); 2) T automático do navio (`inputs\T_passageiros_auto.csv`); 3) linha `*` do berço em `T_passageiros.csv` — hoje só o **25: entrada 75, saída 60** (P75 de 78 entradas e 79 saídas de passageiros no 25, 2024/25–2025/26); 4) T do berço.
+- **T automático:** a cada rodada o sistema lê início e término reais do SPPilots (`tempos_passageiros.py`). Com **3 ou mais** manobras do navio no mesmo berço e tipo (E/S), usa a mediana das 10 mais recentes, arredondada para cima em múltiplos de 5, **se ficar 10 min ou mais longe do padrão**. Nenhuma manobra é descartada; um caso isolado não move a mediana. Mudanças registradas em `dados\T_passageiros_mudancas.csv` (não aparecem no painel).
+- **Navio de carga não entra** (vários práticos fazem o mesmo navio de jeitos diferentes). SAIPEM avaliada e mantida com o T do berço.
+- Exemplo: BUENAVISTA, entradas no 25 de 120, 115 e 100 min → entrada 115.
+
 ## 6. Saída
 
 ### 6.1 Planilha do motor (`E2D_OUT`, aba `E2D 2025`)
@@ -866,7 +946,7 @@ Par ausente → 0 (não ocorre, pois a matriz está completa).
 | Z2↔Z5 | 130 |
 | demais (inclui Z4↔Z5 e pares com Z1) | 60 (`TM_ZONA_DEFAULT`) |
 
-Na pauta de 2026, 131 das 312 mudanças não têm o par na tabela de mudanças e usam `TM_ZONA`.
+Até 05/11/2026, 131 das 312 mudanças da pauta de 2026 não tinham o par na tabela e usavam `TM_ZONA`. Desde a tabela de 06/11/2026 (5.19), todo par que ocorreu em 2025 ou jan–set/2026 está na tabela; o `TM_ZONA` fica só para par novo.
 
 ### 8.4 `ATALAIA`
 
@@ -1041,214 +1121,302 @@ Valores atuais do arquivo. "T usado" = valor após o `int()` do motor.
 
 Berço ausente desta tabela (inclusive os não cadastrados em `BERCO_ZONE`) → T = 60.
 
-### A.2 Aba `Mudanças de entre berços` (Tm por par direcional De → Para; 205 pares)
+### A.2 Aba `Mudanças de entre berços` (Tm por par direcional De → Para; 293 pares; método em 5.19)
 
 | De | Para | Tm (min) |
 |---|---|---|
-| `12-A` | `13/14` | 55 |
-| `12-A` | `16/17` | 70 |
-| `12-A` | `37.1` | 70 |
-| `12-A` | `EMB-3` | 70 |
-| `13/14` | `12-A` | 75 |
-| `13/14` | `13/14` | 50 |
+| `12-A` | `13/14` | 60 |
+| `12-A` | `16/17` | 60 |
+| `12-A` | `34` | 60 |
+| `12-A` | `37.1` | 75 |
+| `12-A` | `39` | 75 |
+| `12-A` | `EMB-3` | 80 |
+| `12-P` | `30` | 60 |
+| `13/14` | `12-A` | 70 |
+| `13/14` | `13/14` | 70 |
+| `13/14` | `16/17` | 60 |
+| `13/14` | `23` | 60 |
 | `13/14` | `30` | 60 |
-| `16/17` | `20/21` | 45 |
+| `13/14` | `37.1` | 75 |
+| `16/17` | `12-A` | 75 |
+| `16/17` | `20/21` | 60 |
 | `16/17` | `29` | 60 |
-| `16/17` | `35.2` | 60 |
+| `16/17` | `31` | 60 |
+| `16/17` | `35.2` | 75 |
 | `16/17` | `AL 3` | 95 |
-| `16/17` | `TIP-3` | 105 |
+| `16/17` | `TIP-2` | 120 |
+| `16/17` | `TIP-3` | 120 |
 | `19` | `16/17` | 60 |
-| `19` | `19` | 80 |
+| `19` | `19` | 60 |
 | `19` | `23` | 60 |
 | `19` | `35.2` | 75 |
-| `20/21` | `30` | 90 |
+| `20/21` | `29` | 60 |
+| `20/21` | `30` | 60 |
 | `20/21` | `32` | 60 |
-| `20/21` | `33` | 65 |
-| `20/21` | `35.1` | 60 |
-| `20/21` | `35.2` | 60 |
-| `20/21` | `39` | 80 |
+| `20/21` | `33` | 60 |
+| `20/21` | `35.1` | 75 |
+| `20/21` | `35.2` | 75 |
+| `20/21` | `39` | 75 |
 | `23` | `31` | 60 |
-| `23` | `CS 2` | 60 |
+| `23` | `CS 2` | 80 |
 | `23` | `TERMG` | 60 |
 | `23` | `TIP-4` | 120 |
-| `25` | `30` | 50 |
-| `25` | `TC 1.1` | 50 |
+| `25` | `20/21` | 60 |
+| `25` | `30` | 60 |
+| `25` | `TC 1.1` | 60 |
+| `29` | `30` | 55 |
 | `29` | `31` | 60 |
-| `29` | `33` | 30 |
-| `29` | `BTP-3` | 80 |
-| `29` | `COS 2` | 110 |
-| `29` | `EMBR.` | 30 |
-| `29/30` | `12-A` | 90 |
-| `30` | `13/14` | 90 |
-| `30` | `29/30` | 60 |
-| `30` | `30` | 60 |
-| `31` | `31` | 75 |
-| `31` | `35.1` | 60 |
+| `29` | `33` | 55 |
+| `29` | `BTP-3` | 105 |
+| `29` | `COS 2` | 120 |
+| `29` | `EMBR.` | 70 |
+| `29/30` | `12-A` | 60 |
+| `30` | `13/14` | 60 |
+| `30` | `25` | 60 |
+| `30` | `29` | 55 |
+| `30` | `29/30` | 55 |
+| `30` | `30` | 55 |
+| `31` | `16/17` | 60 |
+| `31` | `31` | 60 |
+| `31` | `32` | 45 |
+| `31` | `35.1` | 55 |
 | `31` | `BTP-3` | 105 |
-| `31` | `EMB-1` | 75 |
+| `31` | `CS 1` | 75 |
+| `31` | `CS 2` | 70 |
+| `31` | `EMB-1` | 70 |
 | `31` | `EMB-3` | 75 |
-| `32` | `33` | 45 |
-| `32` | `35.1` | 60 |
-| `32` | `CS 2` | 60 |
-| `32` | `EMB-3` | 80 |
-| `32` | `EMB-4` | 60 |
-| `33` | `33` | 110 |
+| `31` | `ULT` | 120 |
+| `32` | `16/17` | 60 |
+| `32` | `31` | 60 |
+| `32` | `33` | 55 |
+| `32` | `35.1` | 55 |
+| `32` | `CS 2` | 70 |
+| `32` | `CS 3` | 75 |
+| `32` | `EMB-3` | 75 |
+| `32` | `EMB-4` | 65 |
+| `33` | `25` | 60 |
+| `33` | `33` | 55 |
 | `33` | `CS 2` | 70 |
 | `33` | `EMB-4` | 60 |
 | `34` | `31` | 60 |
 | `34` | `32` | 45 |
+| `34` | `33` | 55 |
+| `34` | `35.1` | 50 |
 | `34` | `35.2` | 60 |
-| `34` | `CS 4` | 90 |
-| `34` | `EMB-3` | 60 |
+| `34` | `CS 4` | 75 |
+| `34` | `EMB-1/2` | 60 |
+| `34` | `EMB-3` | 75 |
 | `34` | `EMB-4` | 60 |
-| `35.1` | `33` | 35 |
+| `35.1` | `29` | 45 |
+| `35.1` | `33` | 45 |
+| `35.1` | `34` | 60 |
 | `35.1` | `35.1` | 70 |
-| `35.1` | `CORTE` | 60 |
-| `35.1` | `EMB-3` | 75 |
-| `35.2` | `33` | 40 |
-| `35.2` | `34` | 45 |
-| `35.2` | `35.1` | 45 |
-| `35.2` | `35.2` | 60 |
+| `35.1` | `CORTE` | 75 |
+| `35.1` | `EMB-3` | 80 |
+| `35.1` | `VAL` | 75 |
+| `35.2` | `33` | 55 |
+| `35.2` | `34` | 60 |
+| `35.2` | `35.1` | 60 |
+| `35.2` | `35.2` | 65 |
 | `35.2` | `CS 4` | 75 |
-| `35.2` | `EMB-3` | 80 |
-| `37.1` | `23` | 60 |
+| `35.2` | `EMB-3` | 85 |
+| `37.1` | `23` | 80 |
+| `37.1` | `29` | 55 |
 | `37.1` | `35.1` | 60 |
 | `37.1` | `OUT-3` | 80 |
-| `37.1` | `TEG` | 30 |
-| `38` | `35.2` | 90 |
-| `38` | `38` | 80 |
-| `AL 1` | `AL 1` | 85 |
-| `AL 1` | `OUT-1` | 110 |
-| `AL 2` | `DOW` | 75 |
+| `37.1` | `TEG` | 60 |
+| `38` | `35.2` | 65 |
+| `38` | `38` | 65 |
+| `38` | `OUT-3` | 80 |
+| `39` | `23` | 80 |
+| `AGEO` | `AL 4` | 60 |
+| `AGEO` | `DOW` | 75 |
+| `AL 1` | `AL 1` | 80 |
+| `AL 1` | `OUT-1` | 95 |
+| `AL 2` | `DOW` | 90 |
 | `AL 2` | `IB SP` | 60 |
+| `AL 2` | `IB-OE` | 70 |
 | `AL 3` | `AGEO` | 60 |
-| `AL 3` | `AL 4` | 70 |
+| `AL 3` | `AL 4` | 80 |
 | `AL 3` | `DOW` | 90 |
 | `AL 3` | `IB BC` | 60 |
 | `AL 3` | `IB SP` | 60 |
-| `AL 3` | `IB-OE` | 60 |
+| `AL 3` | `IB-OE` | 70 |
 | `AL 4` | `AGEO` | 60 |
-| `AL 4` | `CS 2` | 120 |
+| `AL 4` | `CS 2` | 65 |
 | `AL 4` | `DOW` | 90 |
 | `AL 4` | `IB BC` | 75 |
 | `AL 4` | `IB SP` | 60 |
 | `AL 4` | `IB-OE` | 60 |
-| `BTP-1` | `EMB-1` | 80 |
-| `BTP-1` | `EMB-2` | 75 |
-| `BTP-2` | `EMB-2` | 65 |
-| `BTP-3` | `25` | 80 |
-| `BTP-3` | `EMB-1` | 70 |
-| `BTP-3` | `EMB-2` | 75 |
+| `BTP-1` | `EMB-1` | 70 |
+| `BTP-1` | `EMB-2` | 70 |
+| `BTP-1` | `TC 3` | 105 |
+| `BTP-2` | `BTP-3` | 80 |
+| `BTP-2` | `EMB-1` | 75 |
+| `BTP-2` | `EMB-2` | 70 |
+| `BTP-2` | `TC 1.2` | 105 |
+| `BTP-3` | `25` | 95 |
+| `BTP-3` | `BTP-3` | 80 |
+| `BTP-3` | `EMB-1` | 75 |
+| `BTP-3` | `EMB-2` | 70 |
+| `BTP-3` | `EMB-3` | 70 |
 | `CORTE` | `CORTE` | 60 |
-| `CORTE` | `TEV` | 105 |
-| `COS 2` | `25` | 110 |
-| `COS 2` | `COS 2` | 30 |
-| `COS 3` | `CS 4` | 60 |
-| `CS 1` | `29` | 80 |
-| `CS 1` | `CS 1` | 90 |
-| `CS 1` | `TC 2` | 100 |
-| `CS 2` | `CS 2` | 85 |
-| `CS 3` | `CS 3` | 55 |
-| `CS 3` | `TC 1.2` | 75 |
-| `CS 4` | `34` | 85 |
+| `CORTE` | `TEV` | 70 |
+| `COS 2` | `25` | 105 |
+| `COS 2` | `COS 2` | 60 |
+| `COS 2` | `COS 3` | 60 |
+| `COS 2` | `COS 4` | 60 |
+| `COS 3` | `COS 2` | 60 |
+| `COS 3` | `CS 2` | 90 |
+| `COS 3` | `CS 4` | 90 |
+| `COS 4` | `COS 2` | 60 |
+| `CS 1` | `29` | 75 |
+| `CS 1` | `CS 1` | 60 |
+| `CS 1` | `TC 2` | 70 |
+| `CS 2` | `25` | 80 |
+| `CS 2` | `CS 2` | 60 |
+| `CS 2` | `EMB-4` | 60 |
+| `CS 3` | `16/17` | 80 |
+| `CS 3` | `32` | 75 |
+| `CS 3` | `CS 3` | 60 |
+| `CS 3` | `TC 1.2` | 70 |
+| `CS 3` | `VAL` | 60 |
+| `CS 4` | `34` | 75 |
 | `CS 4` | `CS 1` | 60 |
+| `CS 4` | `CS 2` | 60 |
 | `CS 4` | `EMB-3` | 60 |
-| `CS 4` | `EMB-4` | 90 |
+| `CS 4` | `EMB-4` | 60 |
 | `CTRLE` | `23` | 60 |
 | `DOW` | `25` | 60 |
 | `DOW` | `29` | 55 |
-| `DOW` | `29A` | 60 |
+| `DOW` | `29A` | 55 |
 | `DOW` | `31` | 55 |
+| `DOW` | `35.1` | 60 |
+| `DOW` | `35.2` | 60 |
 | `DOW` | `AL 3` | 105 |
-| `DOW` | `AL 4` | 100 |
-| `DOW` | `IB BC` | 80 |
-| `DOW` | `IB SP` | 90 |
+| `DOW` | `AL 4` | 105 |
+| `DOW` | `CS 2` | 75 |
+| `DOW` | `IB BC` | 75 |
+| `DOW` | `IB SP` | 75 |
 | `DOW` | `IB-OE` | 75 |
-| `EMB-1` | `25` | 60 |
-| `EMB-1` | `31` | 100 |
+| `EMB-1` | `25` | 80 |
+| `EMB-1` | `31` | 60 |
 | `EMB-1` | `BTP-1` | 60 |
 | `EMB-1` | `BTP-2` | 60 |
-| `EMB-1` | `BTP-3` | 75 |
-| `EMB-1` | `EMB-1` | 40 |
+| `EMB-1` | `BTP-3` | 60 |
+| `EMB-1` | `EMB-1` | 60 |
 | `EMB-1` | `TC 1.2` | 60 |
 | `EMB-2` | `31/32` | 60 |
-| `EMB-2` | `BTP-1` | 80 |
+| `EMB-2` | `BTP-1` | 70 |
+| `EMB-2` | `BTP-2` | 70 |
 | `EMB-2` | `BTP-3` | 60 |
-| `EMB-2` | `EMB-2` | 45 |
-| `EMB-2` | `EMB-3` | 60 |
-| `EMB-2` | `TC 1.2` | 55 |
+| `EMB-2` | `EMB-2` | 60 |
+| `EMB-2` | `EMB-3` | 75 |
+| `EMB-2` | `TC 1.2` | 60 |
+| `EMB-2` | `TC 2` | 65 |
 | `EMB-2` | `TEV` | 65 |
+| `EMB-2` | `VAL` | 60 |
+| `EMB-3` | `32` | 60 |
 | `EMB-3` | `34` | 60 |
+| `EMB-3` | `35.2` | 75 |
 | `EMB-3` | `CORTE` | 60 |
-| `EMB-3` | `EMB-3` | 80 |
-| `EMB-3` | `TC 1.1` | 50 |
-| `EMB-3` | `TC 2` | 60 |
-| `EMB-4` | `35.2` | 60 |
-| `EMBR.` | `29` | 30 |
+| `EMB-3` | `EMB-3` | 75 |
+| `EMB-3` | `TC 1.1` | 65 |
+| `EMB-3` | `TC 2` | 65 |
+| `EMB-4` | `32` | 60 |
+| `EMB-4` | `35.2` | 75 |
+| `EMB-4` | `TC 3` | 65 |
+| `EMBR.` | `29` | 60 |
+| `EMBR.` | `32` | 60 |
 | `FB` | `FB` | 80 |
-| `IB BC` | `AL 2` | 70 |
+| `IB BC` | `AL 2` | 60 |
 | `IB BC` | `AL 3` | 60 |
 | `IB BC` | `AL 4` | 60 |
 | `IB BC` | `DOW` | 75 |
 | `IB SP` | `AL 3` | 60 |
-| `IB SP` | `AL 4` | 55 |
+| `IB SP` | `AL 4` | 60 |
 | `IB SP` | `DOW` | 75 |
-| `IB-OE` | `AGEO` | 45 |
+| `IB-OE` | `AGEO` | 60 |
+| `IB-OE` | `AL 2` | 60 |
 | `IB-OE` | `AL 3` | 60 |
 | `IB-OE` | `AL 4` | 60 |
-| `IB-OE` | `CS 1` | 45 |
-| `IB-OE` | `DOW` | 65 |
-| `OUT-1` | `25` | 40 |
-| `OUT-1` | `AL 1` | 90 |
-| `SAIPEM 1` | `SAIPEM 3` | 30 |
-| `SAIPEM 2` | `SAIPEM 1` | 50 |
-| `SAIPEM 2` | `SAIPEM 2` | 110 |
-| `SAIPEM 2` | `SAIPEM 3` | 55 |
+| `IB-OE` | `CS 1` | 60 |
+| `IB-OE` | `DOW` | 75 |
+| `OUT 2/3` | `35.2` | 60 |
+| `OUT-1` | `25` | 60 |
+| `OUT-1` | `AL 1` | 95 |
+| `OUT-2` | `OUT-2` | 60 |
+| `SAIPEM 1` | `SAIPEM 1` | 45 |
+| `SAIPEM 1` | `SAIPEM 3` | 35 |
+| `SAIPEM 2` | `SAIPEM 1` | 45 |
+| `SAIPEM 2` | `SAIPEM 2` | 50 |
+| `SAIPEM 2` | `SAIPEM 3` | 35 |
 | `SAIPEM 3` | `SAIPEM 1` | 45 |
-| `SAIPEM 3` | `SAIPEM 2` | 40 |
-| `SAIPEM 3` | `SAIPEM 3` | 35 |
-| `TC 1.1` | `25` | 70 |
-| `TC 1.1` | `EMB-1` | 90 |
+| `SAIPEM 3` | `SAIPEM 2` | 45 |
+| `SAIPEM 3` | `SAIPEM 3` | 45 |
+| `TC 1.1` | `25` | 60 |
+| `TC 1.1` | `EMB-1` | 60 |
 | `TC 1.1` | `EMB-2` | 60 |
-| `TC 1.1` | `TC 1.1` | 50 |
+| `TC 1.1` | `TC 1.1` | 60 |
+| `TC 1.2` | `29` | 60 |
+| `TC 1.2` | `33` | 60 |
 | `TC 1.2` | `BTP-1` | 85 |
-| `TC 1.2` | `TC 1.2` | 60 |
+| `TC 1.2` | `EMB-3` | 60 |
+| `TC 1.2` | `TC 1.2` | 45 |
 | `TC 1.2` | `TC 2` | 60 |
-| `TC 1.2` | `TC 3` | 55 |
+| `TC 1.2` | `TC 3` | 60 |
+| `TC 1.2` | `TEV` | 60 |
+| `TC 2` | `BTP-1` | 90 |
+| `TC 2` | `BTP-2` | 90 |
 | `TC 2` | `EMB-2` | 60 |
-| `TC 2` | `TC 1.1` | 65 |
+| `TC 2` | `EMB-3` | 60 |
+| `TC 2` | `TC 1.1` | 60 |
 | `TC 2` | `TC 2` | 60 |
-| `TC 3` | `29` | 50 |
-| `TC 3` | `TC 1.2` | 70 |
+| `TC 2` | `TC 3` | 60 |
+| `TC 3` | `29` | 60 |
+| `TC 3` | `TC 1.1` | 60 |
+| `TC 3` | `TC 1.2` | 60 |
+| `TC 3` | `TC 2` | 60 |
+| `TC 3` | `TC 3` | 60 |
 | `TC 3` | `TEV` | 60 |
-| `TEAG` | `16/17` | 70 |
-| `TEG` | `23` | 90 |
-| `TERMG` | `TIP-4` | 150 |
+| `TEAG` | `16/17` | 60 |
+| `TEG` | `23` | 60 |
+| `TERMG` | `TIP-4` | 120 |
 | `TERMG` | `ULT` | 120 |
-| `TEV` | `TEV` | 55 |
-| `TEV` | `VAL` | 70 |
-| `TGG` | `TGG` | 35 |
-| `TIP-2` | `12-A` | 105 |
+| `TEV` | `TEV` | 60 |
+| `TEV` | `VAL` | 75 |
+| `TGG` | `23` | 60 |
+| `TGG` | `TGG` | 60 |
+| `TIP-2` | `12-A` | 120 |
 | `TIP-2` | `16/17` | 120 |
-| `TIP-2` | `35.2` | 135 |
+| `TIP-2` | `35.2` | 120 |
+| `TIP-2` | `CS 2` | 90 |
+| `TIP-2` | `TGG` | 120 |
 | `TIP-2` | `TIP-3` | 60 |
-| `TIP-2` | `TIP-4` | 90 |
-| `TIP-2` | `ULT` | 50 |
-| `TIP-3` | `12-A` | 115 |
+| `TIP-2` | `TIP-4` | 75 |
+| `TIP-2` | `ULT` | 60 |
+| `TIP-3` | `12-A` | 120 |
 | `TIP-3` | `16/17` | 120 |
-| `TIP-3` | `20/21` | 110 |
-| `TIP-3` | `39` | 90 |
+| `TIP-3` | `20/21` | 120 |
+| `TIP-3` | `39` | 120 |
 | `TIP-3` | `TIP-2` | 60 |
-| `TIP-4` | `23` | 90 |
-| `TIP-4` | `COS 2` | 120 |
+| `TIP-3` | `TIP-4` | 60 |
+| `TIP-3` | `ULT` | 55 |
+| `TIP-3` | `VAL` | 90 |
+| `TIP-4` | `23` | 105 |
+| `TIP-4` | `COS 2` | 70 |
 | `TIP-4` | `TIP-2` | 80 |
 | `TIP-4` | `TIP-3` | 60 |
-| `ULT` | `25` | 115 |
-| `ULT` | `CS 1` | 105 |
+| `TIP-4` | `ULT` | 70 |
+| `ULT` | `25` | 105 |
+| `ULT` | `34` | 120 |
+| `ULT` | `CORTE` | 90 |
+| `ULT` | `CS 1` | 90 |
 | `ULT` | `TIP-2` | 60 |
+| `ULT` | `TIP-3` | 60 |
 | `VAL` | `CS 4` | 60 |
 | `VAL` | `EMB-3` | 60 |
-| `VAL` | `TEV` | 70 |
-| `VAL` | `VAL` | 45 |
+| `VAL` | `TEV` | 65 |
+| `VAL` | `VAL` | 60 |
 
 Par (De, Para) ausente → `TM_ZONA` do par de zonas (8.3) → 60.
