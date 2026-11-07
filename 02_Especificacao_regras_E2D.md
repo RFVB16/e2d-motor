@@ -197,7 +197,7 @@ Manobra **Z5** = origem **ou** destino em Z5 (`is_z5`).
 |---|---|
 | Entrada (`fr == 'FB'`) | `T_min[to]`; se o berço não estiver na tabela, **60** |
 | Saída (`to == 'FB'`) | `T_min[fr]`; se não estiver, **60** |
-| Mudança | 1) `T_mud[(fr, to)]` se o par existir (direcional); 2) senão `TM_ZONA[(min(zona), max(zona))]`; 3) senão **60**. A tabela `T_mud` é montada pelo método da seção 5.19 e cobre todos os pares que tiveram mudança em 2025 e em jan–set/2026; o `TM_ZONA` só é usado para par que nunca ocorreu. |
+| Mudança | 1) `T_mud[(fr, to)]` se o par existir (direcional; tabela montada pelo método 5.19); 2) **par novo** (`tm_par_novo`, desde 06/11/2026): berço vizinho mais próximo → par inverso → P60 do par de zonas (`TM_ZONA`, Z3 dividida) → 60. Ver 5.19, "Par que não está na tabela". |
 
 Observação: a ordem dos testes faz `FB → FB` cair no 1º caso (`T_min['FB']` não existe → 60). Desde 27/10/2026 o giro sem atracar (FB → FB) recebe o T das linhas `GIRO …` da tabela (5.14), passado ao motor por `BTP_OV`.
 
@@ -755,7 +755,15 @@ Berço fora da lista forma um grupo só dele.
   - Todas as combinações AL 1–AL 4 entre si e BTP-1–BTP-3 entre si estão na tabela (25 linhas).
   - **Substituição:** é provisório. Quando a tabela for recalculada e o grupo (Alemoa → Alemoa ou BTP → BTP), o par ou o berço tiver 5 ou mais mudanças reais, o valor calculado pelos níveis 1 a 4 substitui o provisório.
 - **Mudanças entre Alemoa, BTP e Cosipa não ocorrem na operação** (petróleo, contêiner e granel), por isso não têm T.
-- **`TM_ZONA` (8.3)** deixa de fazer parte do método: só é usado pelo motor, como último recurso, para um par que **nunca ocorreu** e por isso não está na tabela.
+**Par que não está na tabela (par novo; Praticagem, 06/11/2026; `ep_algoritmo.tm_par_novo`).** Para uma mudança cujo par nunca ocorreu:
+1. **Berço vizinho mais próximo:** troca a origem **ou** o destino pelo berço mais perto (distância da Atalaia, `DIST_ATALAIA`; mesma zona, com a Z3 dividida em sul e norte) cujo par esteja na tabela, **no mesmo sentido**, e usa o T desse par. Vizinhos à mesma distância: mediana dos T deles, arredondada para cima em múltiplos de 5.
+2. Se não houver vizinho: o **par inverso** (destino → origem), se estiver na tabela.
+3. Se não houver nenhum dos dois: o **P60 das mudanças reais do par de zonas** (`TM_ZONA`, 8.3).
+4. Senão, 60 min.
+
+Teste (06/11/2026): 72 pares conhecidos com 3 ou mais mudanças, cada um tratado como se fosse novo. Erro médio contra a mediana real: só zona (P60) 9,5 min; vizinho → inverso → zona 5,6 min. Usar o inverso antes do vizinho piora (6,8 min), porque o sentido muda o tempo em vários pares; juntar mudanças reais de vários vizinhos e tirar o P60 também piora (9,7 min). Desempate pela mediana: menor T dá 5,1 min, mas subestima mais; maior T dá 6,4 min.
+
+Exemplos: TC 1.2 → BTP-2 → vizinho TC 2 → BTP-2 (TC 2 fica a 0,1 milha do TC 1.2) = 90; 12-P → 12-A → vizinho 13/14 → 12-A = 70; 23 → BTP-1 (nenhum vizinho da Z3 sul vai ao BTP-1 nem existe o inverso) → zona Z3 sul ↔ Z4 = 95.
 - O **giro sem atracar (FB → FB)** não é mudança: continua com a regra 5.14.
 - Por que 5 e não menos: a maioria dos pares tem 1 ou 2 mudanças, e uma mudança isolada pode ter sido um atraso. Ex.: 12-A → 39 teve uma única, de 150 min; o T dele (75) vem das 8 mudanças de 12P–20/21 → 35–39.
 
@@ -778,7 +786,21 @@ Berço fora da lista forma um grupo só dele.
 - Tabela usada pelo motor: `inputs\Tempo_T__2025_.xlsx` e `motor_e2d\inputs\Tempo_T__2025_.xlsx`, aba `Mudanças de entre berços` (cópias anteriores: `Tempo_T__2025__antes_mudancas.xlsx`, `Tempo_T__2025__antes_grupos.xlsx`).
 - Consulta: `estudos\T_mudancas_consulta.xlsx` — por par: T, ocorrências do par, durações reais, nível e base usados, ocorrências na base, T anterior; aba `Grupos`.
 
-**Quando refazer.** Ao incluir dados novos de término real (por exemplo, o fim de cada temporada) ou ao mudar os grupos. A tabela é fixa entre uma revisão e outra; o motor não a recalcula sozinho.
+**Atualização (regra definida pela Praticagem em 06/11/2026, para o sistema de produção).** Vale para a tabela de mudanças e para a tabela de T de entrada e saída por berço.
+- **Janela móvel de 24 meses completos.** Dois anos cobrem duas vezes cada estação (temporada de cruzeiros, safras), sem que uma pese mais que a outra.
+- **Recálculo a cada 3 meses** (janeiro, abril, julho e outubro), só com meses já fechados: saem os 3 meses mais antigos e entram os 3 mais recentes.
+
+| Recálculo em | Dados usados | Sai | Entra |
+|---|---|---|---|
+| janeiro/2027 | jan/2025 a dez/2026 | — | — |
+| abril/2027 | abr/2025 a mar/2027 | jan–mar/2025 | jan–mar/2027 |
+| julho/2027 | jul/2025 a jun/2027 | abr–jun/2025 | abr–jun/2027 |
+| outubro/2027 | out/2025 a set/2027 | jul–set/2025 | jul–set/2027 |
+
+- **Mesmo método** desta seção (níveis, mínimo de 5, mediana/P60, arredondamento para cima em múltiplos de 5). A regra provisória da Z4 e qualquer outro valor provisório são substituídos automaticamente quando o nível calculado passar a ter 5 ocorrências.
+- **Conferência antes de entrar em uso:** o sistema lista os pares (e berços) cujo T muda 15 min ou mais em relação à tabela em uso; a Praticagem aprova antes da troca. Evita que um erro de dado mude o T sem ninguém ver.
+- **Fonte dos tempos reais:** o sistema deve gravar início e término reais de **toda** manobra encerrada (hoje só existe na pauta de serviço exportada à mão; a Consulta de Serviços do SPPilots tem os campos INÍCIO e TÉRMINO por manobra — ver `tempos_passageiros.py`, que já faz isso para navios de passageiros).
+- **Estado atual do protótipo (06/11/2026):** as tabelas ainda são fixas e recalculadas à mão (mudanças: 2025 + jan–set/2026; entrada e saída: 2025). O T de navio de passageiros (5.20) já é automático e não segue esta janela: usa as 10 manobras mais recentes de cada navio em cada berço.
 
 ### 5.20 T de navio de passageiros (06/11/2026)
 
@@ -939,22 +961,29 @@ Berços que aparecem na pauta de 2026 e **não estão cadastrados** (caem na Z2 
 
 Par ausente → 0 (não ocorre, pois a matriz está completa).
 
-### 8.3 `TM_ZONA` (Tm padrão de mudança sem histórico do par, minutos, simétrica)
+### 8.3 `TM_ZONA` (P60 das mudanças reais por par de zonas, minutos, simétrica; desde 06/11/2026)
 
-| Par de zonas | Tm |
-|---|---|
-| Z2↔Z2 | 60 |
-| Z3↔Z3 | 60 |
-| Z3↔Z4 | 60 |
-| Z5↔Z5 | 60 |
-| Z2↔Z3 | 65 |
-| Z4↔Z4 | 80 |
-| Z2↔Z4 | 90 |
-| Z3↔Z5 | 105 |
-| Z2↔Z5 | 130 |
-| demais (inclui Z4↔Z5 e pares com Z1) | 60 (`TM_ZONA_DEFAULT`) |
+Usado só para **par novo** sem vizinho nem inverso na tabela (5.19). Z3 dividida: **Z3 sul** = 12-A a 20/21, 23, 25, Outeirinhos; **Z3 norte** = Saboó (VAL, CORTE, CS), Ilha (IB, AGEO) e Embraport (`Z3_NORTE`, função `zona_mud`). A divisão vale só para o T de mudança; lancha e demais regras usam a `zona()` normal.
 
-Até 05/11/2026, 131 das 312 mudanças da pauta de 2026 não tinham o par na tabela e usavam `TM_ZONA`. Desde a tabela de 06/11/2026 (5.19), todo par que ocorreu em 2025 ou jan–set/2026 está na tabela, mais todas as combinações dentro da Alemoa e do BTP; o `TM_ZONA` fica só para par que nunca ocorreu.
+| Par de zonas | Mudanças | Tm (P60) |
+|---|---|---|
+| Z2↔Z2 | 169 | 60 |
+| Z2↔Z3 sul | 47 | 60 |
+| Z2↔Z3 norte | 179 | 75 |
+| Z2↔Z4 | 35 | 105 |
+| Z2↔Z5 | 11 | 120 |
+| Z3 sul↔Z3 sul | 26 | 60 |
+| Z3 sul↔Z3 norte | 6 | 80 |
+| Z3 sul↔Z4 | 5 | 95 |
+| Z3 sul↔Z5 | 23 | 120 |
+| Z3 norte↔Z3 norte | 28 | 60 |
+| Z3 norte↔Z4 | 124 | 65 |
+| Z3 norte↔Z5 | 7 | 90 |
+| Z4↔Z4 | 4 | 80 (todas as combinações já estão na tabela pela regra provisória 5.19) |
+| Z5↔Z5 | 53 | 60 |
+| demais (Z4↔Z5 não ocorre) | — | 60 (`TM_ZONA_DEFAULT`) |
+
+Antes de 06/11/2026: mediana das 437 mudanças de 2025, sem dividir a Z3 (Z2↔Z2 60, Z2↔Z3 65, Z3↔Z3 60, Z3↔Z4 60, Z2↔Z4 90, Z3↔Z5 105, Z2↔Z5 130, Z4↔Z4 80, Z5↔Z5 60).
 
 ### 8.4 `ATALAIA`
 

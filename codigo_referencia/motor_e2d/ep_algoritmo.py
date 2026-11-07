@@ -126,34 +126,78 @@ def gL(berco_a: str, berco_b: str) -> int:
     za, zb = zona(berco_a), zona(berco_b)
     return ZONE_MATRIX.get((min(za, zb), max(za, zb)), 0)
 
-# ── Tm padrão por par de zonas (mudanças sem histórico do par) ──────────────
-# Mediana das 437 mudanças de 2025 com término (pauta original), agrupadas pelo
-# par de zonas sem sentido, arredondada para cima em múltiplos de 5 min.
-# Substitui o antigo padrão fixo de 60 min (out/2026). Z4↔Z5 não ocorre
-# (petróleo/contêiner × granel) e cai no padrão final de 60 min.
+# ── Mudança cujo par de berços não está na tabela (par novo) ─────────────────
+# Regra de 06/11/2026 (método completo em PACOTE_IMPLEMENTACAO, 02, seção 5.19):
+#   1) berço vizinho mais próximo: troca a origem OU o destino pelo berço mais perto
+#      (distância da Atalaia, mesma zona, com a Z3 dividida em sul e norte) cujo par
+#      esteja na tabela, no mesmo sentido, e usa o T desse par (vizinhos à mesma
+#      distância: mediana dos T deles, arredondada para cima em múltiplos de 5);
+#   2) senão, o par inverso (destino → origem), se estiver na tabela;
+#   3) senão, o P60 das mudanças reais do par de zonas (TM_ZONA, abaixo);
+#   4) senão, 60 min.
+# TM_ZONA: P60 de 717 mudanças reais (2025 + jan–set/2026), arredondado para cima em
+# múltiplos de 5, com a Z3 dividida: 3 = Z3 sul, 3.5 = Z3 norte. Z4↔Z5 não ocorre.
+Z3_NORTE = {'VAL', 'CORTE', 'CS 1', 'CS 2', 'CS 3', 'CS 4', 'IB BC', 'IB SP', 'AGEO', 'IB-OE',
+            'EMBR.', 'EMB-1', 'EMB-2', 'EMB-3', 'EMB-4', 'EMB-1/2'}
 TM_ZONA = {
-    (2, 2): 60, (3, 3): 60, (3, 4): 60, (5, 5): 60,
-    (2, 3): 65,
-    (4, 4): 80,
-    (2, 4): 90,
-    (3, 5): 105,
-    (2, 5): 130,
+    (2, 2): 60, (2, 3): 60, (2, 3.5): 75, (2, 4): 105, (2, 5): 120,
+    (3, 3): 60, (3, 3.5): 80, (3, 4): 95, (3, 5): 120,
+    (3.5, 3.5): 60, (3.5, 4): 65, (3.5, 5): 90,
+    (4, 4): 80, (5, 5): 60,
 }
 TM_ZONA_DEFAULT = 60
 
+def zona_mud(berco: str) -> float:
+    """Zona para o T de mudança: igual a zona(), mas a Z3 dividida (3 = sul, 3.5 = norte)."""
+    b = str(berco).strip()
+    z = zona(b)
+    return 3.5 if (z == 3 and b in Z3_NORTE) else z
+
 def tm_zona(fr: str, to: str) -> int:
-    """Tm padrão para mudança cujo par de berços não está na tabela."""
-    za, zb = zona(fr), zona(to)
+    """P60 das mudanças reais do par de zonas (Z3 dividida)."""
+    za, zb = zona_mud(fr), zona_mud(to)
     return TM_ZONA.get((min(za, zb), max(za, zb)), TM_ZONA_DEFAULT)
+
+_TM_NOVO_CACHE = {}
+def tm_par_novo(fr: str, to: str, T_mud: dict | None) -> int:
+    """T de mudança para par que não está na tabela: vizinho → inverso → zona."""
+    a, b = str(fr).strip(), str(to).strip()
+    ck = (a, b, id(T_mud), len(T_mud) if T_mud else 0)
+    if ck in _TM_NOVO_CACHE:
+        return _TM_NOVO_CACHE[ck]
+    res = None
+    D = globals().get('DIST_ATALAIA', {})
+    if T_mud and a in D and b in D:
+        za, zb = zona_mud(a), zona_mud(b)
+        cand = []
+        for (x, y), t in T_mud.items():
+            if (x, y) == (a, b) or (x, y) == (b, a) or x == 'FB' or y == 'FB':
+                continue
+            if y == b and x != a and x in D and zona_mud(x) == za:
+                cand.append((abs(D[x] - D[a]), t))
+            if x == a and y != b and y in D and zona_mud(y) == zb:
+                cand.append((abs(D[y] - D[b]), t))
+        if cand:
+            d0 = min(c[0] for c in cand)
+            ts = sorted(c[1] for c in cand if c[0] == d0)
+            n = len(ts)
+            med = ts[n // 2] if n % 2 else (ts[n // 2 - 1] + ts[n // 2]) / 2
+            res = int(-(-med // 5) * 5)
+    if res is None and T_mud and (b, a) in T_mud and a != b:
+        res = T_mud[(b, a)]
+    if res is None:
+        res = tm_zona(a, b)
+    _TM_NOVO_CACHE[ck] = res
+    return res
 
 def gT(fr: str, to: str, T_min: dict, T_mud: dict | None = None) -> int:
     """
     Tempo estimado de manobra no berço.
     Para entradas (FB→berço): T do berço de destino.
     Para saídas (berço→FB):   T do berço de origem.
-    Para mudanças (sem FB):   1) Tm do par na tabela de mudanças (histórico);
-                              2) senão, Tm padrão do par de zonas (TM_ZONA);
-                              3) senão, 60 min.
+    Para mudanças (sem FB):   1) Tm do par na tabela de mudanças (método 5.19);
+                              2) par novo: vizinho mais próximo → inverso →
+                                 P60 do par de zonas (tm_par_novo).
     """
     if fr == 'FB':
         return T_min.get(str(to).strip(), 60)
@@ -164,7 +208,7 @@ def gT(fr: str, to: str, T_min: dict, T_mud: dict | None = None) -> int:
         key = (str(fr).strip(), str(to).strip())
         if key in T_mud:
             return T_mud[key]
-    return tm_zona(fr, to)  # par sem histórico: padrão por par de zonas
+    return tm_par_novo(fr, to, T_mud)  # par novo: vizinho → inverso → zona (06/11/2026)
 
 def r15(dt: datetime) -> datetime:
     """Arredonda datetime para o múltiplo de 15 min mais próximo (para cima se ímpar)."""
