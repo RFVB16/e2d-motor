@@ -1,0 +1,1480 @@
+# Especificação funcional do motor de escalação E2D (Escala 2 e Desce)
+
+Praticagem do Porto de Santos (ZP-16)
+Documento técnico para reimplementação em produção
+
+| Item | Valor |
+|---|---|
+| Versão do documento | 1.1 (28/10/2026): regra da draga, giro sem atracar, escala gráfica |
+| Referência oficial | O código-fonte. Este documento descreve o código; onde houver divergência, vale o código. |
+| Código de referência | `motor_e2d/motor_e2d.py`, `motor_e2d/ep_sim_v3_corrigido.py`, `motor_e2d/nova_escalacao.py`, `motor_e2d/ep_algoritmo.py`, `motor_e2d/carregar_pauta.py`, `motor_e2d/grupo_a_data.py`, `gerar_2026.py`, `escala_grafica.py` (provisório) |
+| Convenção | Tudo o que está aqui foi lido no código. Trechos marcados **[Inferência]** são interpretação minha, não regra escrita. Trechos marcados **[Ponto de atenção]** são comportamentos não óbvios, frágeis ou aparentemente inconsistentes, listados também na seção 9. |
+
+---
+
+## 1. Objetivo e escopo do motor
+
+O motor E2D recebe:
+
+1. a **pauta de manobras** (lista de manobras com data, hora de início, navio, berço de origem e berço de destino);
+2. a **escala de turnos** (quais práticos trabalham em cada dia, D1 e D2 de cada grupo, já corrigida pelo que aconteceu de fato);
+3. a **tabela de tempos T** (tempo de manobra por berço e por mudança);
+4. a **atribuição fixa dos práticos especiais** (JA, SI, CH), que fazem os mesmos navios que fariam na E12.
+
+Ele devolve, para cada manobra, **qual prático regular faz a manobra**, se ela é a **A** (1ª do ciclo) ou a **B** (2ª do ciclo) daquele prático, e a **escalação** (a fila) resultante logo após a manobra.
+
+Regra central da E2D: cada prático regular faz ciclos de **2 manobras (A → B)**. Depois da A ele fica com uma hora prevista de disponibilidade (HH:MM) e permanece na frente da fila. Assim que fica disponível, faz a B. Depois da B, "desce", ou seja, vai para o fim da fila. Toda manobra vale 1 e o ciclo fecha na 2ª manobra.
+
+Escopo deste documento:
+
+- **Dentro**: o motor (`motor_e2d.py` com `ep_sim_v3_corrigido.simular_turno` e `nova_escalacao`) e o orquestrador ao vivo (`gerar_2026.py`), que monta as entradas do motor (pauta, turnos, especiais).
+- **Fora**: a coleta do SPPILOTS, o `ep_atualizar.py` (montagem da página/painel), a publicação. São citados apenas onde fornecem formato de entrada.
+
+### 1.1 Fluxo geral (produção ao vivo)
+
+```
+historico_2026.csv  (SPPILOTS, com prático real)  ┐
+pauta_rt.csv        (SPPILOTS, pauta atual)        ├─> gerar_2026.py
+inputs/bigramas_2026.xlsx (aba RESUMO)             ┘     1. monta a pauta
+                                                          2. lê o prático real por navio
+                                                          3. monta a escala do dia e corrige por quem trabalhou
+                                                          4. monta os turnos (D1+D2)
+                                                          5. define os especiais (real do SPPILOTS; resto simulado pela E12)
+                                                          6. grava _pauta_live.xlsx, _turnos_live.pkl, _especiais_live.xlsx
+                                                          7. executa motor_e2d.py (subprocesso, cwd = motor_e2d/)
+                                                          8. converte a saída para ao_vivo/E2D_2026_v6.xlsx
+```
+
+O motor é **recalculado do zero a cada execução**, desde o primeiro turno da escala (01/01/2026) até a última manobra da pauta. Não existe estado persistido entre execuções. **[Inferência]** Por isso, uma correção de escala ou de pauta no passado pode alterar a atribuição de manobras posteriores.
+
+---
+
+## 2. Entradas
+
+### 2.1 Entradas do orquestrador `gerar_2026.py`
+
+Todas as entradas têm caminho padrão relativo à pasta do `gerar_2026.py` e podem ser substituídas por variável de ambiente.
+
+| Entrada | Caminho padrão | Variável | Uso |
+|---|---|---|---|
+| Histórico SPPILOTS | `historico_2026.csv` | `HIST_IN` | Manobras já executadas, com prático real |
+| Pauta atual SPPILOTS | `pauta_rt.csv` | `RT_IN` | Manobras a partir do fim do histórico |
+| Pauta de reserva | `inputs/Pauta_de_Manobra_2026.xlsx` | `PAUTA_IN` | Usada só se o histórico não existir |
+| Escala | `inputs/bigramas_2026.xlsx` | `ESCALA_IN` | Aba `RESUMO` |
+| Tabela T | `motor_e2d/inputs/Tempo_T__2025_.xlsx` | (fixo) | Só para a simulação E12 dos especiais |
+| Saída | `ao_vivo/E2D_2026_v6.xlsx` | `SAIDA` | Planilha final |
+| Margens | 45 / 25 | `MARGEM_ENTRADA` / `MARGEM_OUTRAS` | Repassadas ao motor |
+
+#### 2.1.1 CSV do SPPILOTS (`historico_2026.csv` e `pauta_rt.csv`)
+
+Codificação `utf-8-sig`, separador vírgula. Cabeçalho observado:
+
+`datetime,Data,Hora,Vessel,ES,Berco,Berco2,From,To,Calado,Bordo,Agente,Obs,Status,dois_prat,Pratico`
+
+Colunas usadas pelo código (`gerar_2026._ler_csv`, `_completar_dois_praticos` e bloco 1):
+
+| Coluna | Formato | Uso |
+|---|---|---|
+| `datetime` | `AAAA-MM-DD HH:MM:SS` | Início da manobra (`DT`). Linhas com data inválida são descartadas. |
+| `Vessel` | texto | Nome do navio (com `strip`) |
+| `From` / `To` | código de berço (ex.: `FB`, `TC 1.1`, `BTP-1`) | Origem e destino (com `strip`) |
+| `ES` | `E` (entrada), `S` (saída), `M` (mudança) | Só para agrupar a duplicação de 2 práticos |
+| `dois_prat` | `True`/`False` (ou `1`) | Navio de 2 práticos |
+| `Pratico` | sigla do prático (ex.: `BD`), vazio se ainda não escalado | Prático real |
+| `Termino` | `HH:MM` (opcional; **não existe no CSV atual**) | Só informativo |
+
+#### 2.1.2 Escala `bigramas_2026.xlsx`, aba `RESUMO`
+
+Colunas: `MÊS, DIA, TIPO, P1 … P12`.
+
+- A **data de cada linha é a posição da linha**: linha de índice *i* (0 = primeira linha de dados) corresponde a `01/01/2026 + i dias` (`gerar_2026`, bloco 3). As colunas `MÊS` e `DIA` **não são lidas**. **[Ponto de atenção]**
+- `TIPO`: `D1` ou `D2` (com `strip`). Outros valores são ignorados na montagem dos turnos.
+- `P1..P12`: siglas dos 12 práticos do dia, na ordem dos "slots" (posições). Inclui especiais. Célula que não é texto vira vazio (`None`). As siglas passam por `J()`: `strip`, maiúsculas, e `JÁ` → `JA`.
+
+### 2.2 Entradas do motor `motor_e2d.py`
+
+O motor é executado com `cwd = motor_e2d/` e recebe por variável de ambiente:
+
+| Variável | Conteúdo (gerado por `gerar_2026.py`) |
+|---|---|
+| `PAUTA_FILE` | `_pauta_live.xlsx`: colunas `Data` (`DD/MM/AAAA`), `Hora` (`HH:MM`), `Termino` (`HH:MM` ou vazio), `Vessel`, `From`, `To`. Uma linha por prático (navio de 2 práticos = 2 linhas). |
+| `TURNOS` | `_turnos_live.pkl`: lista de dicionários de turno (ver 2.2.2) |
+| `ESP_FONTE` | `_especiais_live.xlsx`: colunas `Seq, Navio, Pratico`; `Seq` = índice da linha da pauta + 1 |
+| `MARGEM_ENTRADA`, `MARGEM_OUTRAS` | margens em minutos (padrão 45 e 25) |
+| `E2D_OUT` | nome da planilha de saída do motor (`_E2D_live.xlsx`) |
+| `FB_OUT` | pickle com o log de "ninguém disponível" (`_fallback.pkl`) |
+
+#### 2.2.1 Leitura da pauta (`carregar_pauta.carregar_pauta`)
+
+Para cada linha:
+
+1. `datetime = strptime(Data + ' ' + Hora, '%d/%m/%Y %H:%M')`. Linha que não converte é **descartada**.
+2. `Termino`: se preenchido e válido (`HH:MM`), `dt_fim` = mesmo dia com a hora do término; se `dt_fim <= datetime`, soma 1 dia. Só informativo (não entra na disponibilidade).
+3. `Vessel`, `From`, `To` com `strip`. `Data` e `Hora` são mantidos como texto.
+
+Depois: ordenação **estável** por `datetime` (a ordem original do arquivo é preservada entre manobras do mesmo minuto).
+
+`pares2` = conjunto de `(datetime, Vessel)` que aparecem **exatamente 2 vezes** (navio de 2 práticos).
+
+#### 2.2.2 Turno (estrutura de `_turnos_live.pkl`)
+
+| Campo | Tipo | Significado |
+|---|---|---|
+| `dt_ini` | Timestamp | Data do D1 às 07:30 |
+| `dt_d2` | Timestamp | Data do D1 + 1 dia, às 07:30 (início do D2) |
+| `dt_fim` | Timestamp | Próximo D1 às 07:30. **O motor sobrescreve** com o `dt_ini` do turno seguinte (`motor_e2d.py`, linhas 256-258). |
+| `dia1` | lista[12] | Siglas do D1 na ordem dos slots P1..P12 (pode conter `None`; inclui especiais) |
+| `dia2` | lista[12] | Siglas do D2 (se não houver a linha do dia seguinte, repete `dia1`) |
+| `Y` | lista[12] | Fila inicial. Igual a `dia1`, exceto no 1º turno (ver 3.9). |
+
+#### 2.2.3 Tabela de tempos `Tempo_T__2025_.xlsx`
+
+Lida por `ep_algoritmo.carregar_dados()`:
+
+- Aba **`T Entrada ou saída`**: colunas `Berço`, `T - TEMPO (min)`, `T - TEMPO (h)`. Gera `T_min[berço] = int(T - TEMPO (min))`. Linhas com `Berço` ou T vazio são ignoradas (a última linha da aba é uma nota de texto e cai aqui). O `int()` **trunca** valores fracionários: 83,5 → 83; 127,5 → 127; 157,5 → 157; 76,5 → 76. **[Ponto de atenção]**
+- Aba **`Mudanças de entre berços`**: colunas `Mudança`, `De`, `Para`, `Tm (min)`, `Tm (h)`. Gera `T_mud[(De, Para)] = int(Tm (min))`. A chave é **direcional**: (A, B) e (B, A) são entradas distintas. Linhas sem `De`, `Para` ou `Tm` são ignoradas. Hoje são 314 pares e todos os valores são inteiros. Os valores são calculados pelo método da seção 5.19 (06/11/2026).
+- A função `carregar_dados()` também abre um arquivo de manobras de 2025 (`Manobras_2025__original_.xlsx`, procurado em `inputs/`, `.`, `..` etc.). O conteúdo é descartado pelo motor, mas **o arquivo precisa existir**, senão o motor para com erro. **[Ponto de atenção]**
+
+As tabelas completas estão no Apêndice A.
+
+#### 2.2.4 Especiais (`ESP_FONTE`)
+
+`motor_e2d.py`, linhas 199-217: para cada linha de `_especiais_live.xlsx` cuja coluna `Seq` seja inteira e cuja `Pratico` esteja em `ESPECIAIS`:
+
+- `idx = Seq − 1` é o índice da manobra na pauta já ordenada;
+- o motor **exige** (`assert`) que o `Vessel` dessa linha da pauta seja igual ao `Navio` da planilha. Se não for, o motor para.
+- grava `esp_atrib[idx] = especial`.
+
+Depois converte para a chave `(Data, Hora, Vessel)` → **lista** de especiais (um navio de 2 práticos pode ter 2 especiais). Essa estrutura é `sim._ESP_ATRIB_FORCADAS_KEY` (o "mapa de forçamento").
+
+Se `ESP_FONTE` não for informado, o motor tenta `from engine_e12 import EngineE12`, módulo **que não está no pacote**, e falha. Em produção `ESP_FONTE` é obrigatório. **[Ponto de atenção]**
+
+---
+
+## 3. Conceitos e definições
+
+### 3.1 Práticos regulares e especiais
+
+- **Especiais**: `ESPECIAIS = {'JA','SI','CH'}` (configurável por `ESP_SET`, separado por vírgula). No `gerar_2026.py` o conjunto é fixo `{'JA','SI','CH'}`.
+- **Regulares**: todos os demais.
+- Especiais **não** participam da lógica E2D: não entram na busca da fila, não têm ciclo A/B, não contam no limite Z5 e não recebem status A/B. Fazem apenas as manobras fixadas pelo mapa de forçamento.
+
+### 3.2 Normalização de siglas (`ep_sim_v3_corrigido.norm`)
+
+`strip` → decomposição Unicode NFD → remoção de acentos → maiúsculas. Aplicada às listas `dia1`, `dia2` e `Y` dos turnos.
+
+### 3.3 Dia operacional
+
+Vai das **07:30 às 07:29** do dia seguinte. Uma manobra às `hh:mm` pertence ao dia operacional `D` se `(hh, mm) >= (7, 30)` na data `D`; senão, pertence a `D − 1` (`_calc_dia_op`; no orquestrador, `dia_op(t) = (t − 7h30).date()`).
+
+### 3.4 Turno
+
+Um turno = D1 + D2 de um grupo = de `dt_ini` (D1 07:30) até `dt_fim` (próximo D1 07:30). A virada D1 → D2 é em `dt_d2` (D1 + 1 dia, 07:30). As manobras do turno são as que têm `dt_ini <= datetime < dt_fim`.
+
+### 3.5 Zonas (`ep_algoritmo.zona`)
+
+`zona(berço) = BERCO_ZONE.get(berço.strip(), 2)`. **Berço não cadastrado cai na Zona 2.** Tabela completa na seção 8.1.
+
+| Zona | Região |
+|---|---|
+| Z1 | FB (Fora da Barra) |
+| Z2 | Canal principal (29-39, TC, SAIPEM, TERMG, TEV, DOW...) |
+| Z3 | Porto interno (12-25, EMB, OUT, CS, IB, AGEO, VAL...) |
+| Z4 | Alemoa / BTP (AL 1-4, BTP-1..3, TRSP) |
+| Z5 | Cosipa / TIP / Ultrafértil (COS, TIP, ULT) |
+
+Manobra **Z5** = origem **ou** destino em Z5 (`is_z5`).
+
+### 3.6 Tipos de manobra
+
+- **Entrada**: `From == 'FB'`.
+- **Saída**: `To == 'FB'`.
+- **Mudança**: nem `From` nem `To` é `FB`.
+
+### 3.7 Tempo T da manobra (`ep_algoritmo.gT(fr, to, T_min, T_mud)`)
+
+| Caso | T |
+|---|---|
+| Entrada (`fr == 'FB'`) | `T_min[to]`; se o berço não estiver na tabela, **60** |
+| Saída (`to == 'FB'`) | `T_min[fr]`; se não estiver, **60** |
+| Mudança | 1) `T_mud[(fr, to)]` se o par existir (direcional; tabela montada pelo método 5.19); 2) **par novo** (`tm_par_novo`, desde 06/11/2026): berço vizinho mais próximo → par inverso → P60 do par de zonas (`TM_ZONA`, Z3 dividida) → 60. Ver 5.19, "Par que não está na tabela". |
+
+Observação: a ordem dos testes faz `FB → FB` cair no 1º caso (`T_min['FB']` não existe → 60). Desde 27/10/2026 o giro sem atracar (FB → FB) recebe o T das linhas `GIRO …` da tabela (5.14), passado ao motor por `BTP_OV`.
+
+### 3.8 Tempo de lancha L (`ep_algoritmo.gL(a, b)`)
+
+`L = ZONE_MATRIX[(min(zona(a), zona(b)), max(zona(a), zona(b)))]` (simétrica). Berços diferentes na mesma zona → L = 0. Tabela na seção 8.2.
+
+Na disponibilidade, `a` = **destino da última manobra** do prático e `b` = **origem da manobra candidata**.
+
+### 3.9 Arredondamento r15 (`ep_algoritmo.r15`)
+
+```
+m  = hora*60 + minuto          (segundos são descartados)
+rv = round(m / 15) * 15
+resultado = mesmo dia, rv minutos (passa para o dia seguinte se rv >= 1440)
+```
+
+**É arredondamento para o quarto de hora MAIS PRÓXIMO, não para cima.** Resto de 0 a 7 min arredonda para baixo; de 8 a 14 min, para cima. Exemplos verificados: 10:07 → 10:00; 10:08 → 10:15; 10:22 → 10:15; 10:23 → 10:30; 23:53 → 00:00 do dia seguinte. Com minutos inteiros não existe empate exato (x,5), então o `round` "bancário" do Python não interfere. A docstring diz "para cima se ímpar", o que não corresponde ao comportamento. **[Ponto de atenção]**
+
+### 3.10 Margem
+
+Valor somado ao T antes do arredondamento (`motor_e2d._avail_b45`):
+
+| Manobra candidata | Margem |
+|---|---|
+| Sai de FB (`From == 'FB'`, entrada) | `MARGEM_ENTRADA` = **45 min** |
+| Qualquer outra (saída ou mudança) | `MARGEM_OUTRAS` = **25 min** |
+
+A margem depende da **manobra candidata** (a próxima), não da manobra anterior. O comentário na linha 43 do `motor_e2d.py` diz "15 min nas demais", mas o valor em vigor é 25. **[Ponto de atenção]**
+
+### 3.11 Disponibilidade (HH:MM)
+
+Para um prático `p` com última manobra `last = (start, fr, to)` e uma manobra candidata `m` com origem `m.From` e início `m.datetime`:
+
+```
+avail(p, m) = r15( last.start + gT(last.fr, last.to) + margem(m.From) + gL(last.to, m.From) )
+p está disponível para m  <=>  p nunca manobrou (last = None)  OU  avail(p, m) <= m.datetime
+```
+
+- `last` é a **última manobra do prático, qualquer que seja** (A ou B), em todo o histórico simulado, inclusive em turnos anteriores.
+- Usa o **início programado** da última manobra. O término real não entra no cálculo.
+- A disponibilidade **depende da manobra candidata** (pela margem e pelo L). O mesmo prático pode estar disponível para uma mudança e não para uma entrada no mesmo horário.
+- Exemplo real (01/01/2026): BD fez A às 07:30 FB → TC 1.1 (T = 60, Z2). Para uma entrada (sai de FB): 07:30 + 60 + 45 + L(Z2→Z1 = 20) = 09:35 → r15 = **09:30**. Para uma saída de 20/21 (Z3): 07:30 + 60 + 25 + L(Z2→Z3 = 5) = **09:00**. BD fez a B às 09:00 saindo de 20/21.
+
+### 3.12 Ciclo A → B (estado do prático regular)
+
+Cada regular tem um contador `pts_g[p]`, que vale 0 (ciclo fechado) ou 1 (ciclo aberto). Cada manobra soma 1 (`pts_man_fn` fixo em 1,0; `THRESHOLD = 2.0`; `CARRY = False`).
+
+- Manobra com `pts_g` = 0 antes → **A** (fica com 1; ciclo aberto).
+- Manobra com `pts_g` = 1 antes → **B** (chega a 2 ≥ THRESHOLD; volta a 0; ciclo fechado; "desce").
+
+O contador é **global**: persiste entre dias e entre turnos. Se o prático fez a A no fim do seu D2, a próxima manobra dele, no turno seguinte (depois da folga), é a B. Ele volta da folga com a **B pendente**.
+
+### 3.13 Fila (`fila_display`)
+
+Uma única lista ordenada de siglas, que pode conter especiais (são ignorados na busca e na exibição como regulares). **A mesma lista serve para escolher o prático e para exibir a escalação.** A variável `fila` também existe no código, mas não é usada na decisão.
+
+Regras de movimentação:
+
+| Evento | Efeito na fila |
+|---|---|
+| Regular faz **A** | **Não se move.** Fica na mesma posição; só passa a exibir `(HH:MM)` (`atualizar_nao_esp`: "Após A: piloto FICA NA MESMA POSIÇÃO") |
+| Regular faz **B** | Sai da posição e vai para o **fim** da fila (`inserir_apos_B`) |
+| Especial manobra | Fila de regulares não muda |
+| Virada de dia operacional / D1→D2 / entre turnos | Ver seção 5 |
+
+Consequência **[Inferência, confirmada na saída]**: como o escolhido é sempre o primeiro disponível na ordem da fila, todos os que estão à frente dele estão indisponíveis (em geral, com ciclo aberto). Ele fica parado ali após a A. A frente da fila acumula os práticos com A feita, **na ordem em que fizeram a A** (não na ordem do HH:MM). Quando um deles fica disponível, é o primeiro disponível da fila e faz a B. A função `inserir_apos_A` (que reordenaria por horário) existe, mas **nunca é chamada**.
+
+---
+
+## 4. Algoritmo passo a passo
+
+### 4.1 Estado global (mantido entre turnos, durante a execução)
+
+| Estado | Conteúdo |
+|---|---|
+| `last_g[p]` | Última manobra de cada prático: `{start, fr, to, fim}` |
+| `pts_g[p]` | 0 ou 1 (ciclo) |
+| `pend_b_carry` | Conjunto de regulares com ciclo aberto (A sem B), passado de um turno ao seguinte |
+| `ultima_esc` | Texto da escalação após a última manobra do turno anterior |
+| `prev_dia2` | Lista `dia2` normalizada do turno anterior |
+| `man_count` | Contador absoluto de manobras (usado só para exibir os especiais) |
+| `ns_carry` | Posição relativa da próxima manobra de cada especial (só para exibição) |
+
+### 4.2 Laço de turnos (`motor_e2d.py`, linhas 280-338)
+
+```
+turnos ← ordenar por dt_ini; dt_fim[i] ← dt_ini[i+1]
+para cada turno ti:
+    Y_d1 ← norm(dia1) sem vazios/'?'
+    se ti == 0:
+        fila_ini ← norm(Y) sem vazios                       (inclui especiais)
+    senão:
+        se ultima_esc ≠ '' e conjunto(prev_dia2) ≠ conjunto(Y_d1):
+            fila_ini ← nomes de nova_escalacao(ultima_esc, prev_dia2, Y_d1)   (seção 5.6)
+            se vazio: fila_ini ← Y_d1
+        senão:
+            fila_ini ← Y_d1                                  (ordem dos slots do D1)
+        ── B pendente entre turnos ──
+        R ← [p em fila_ini | p não especial, p ∈ pend_b_carry, p ∉ prev_dia2]
+        se R: remove R e reinsere, na ordem em que estavam,
+              na posição do primeiro não especial (na prática, o início da fila)
+    executar simular_turno(turno, fila_ini, …)  →  histórico, ultima_esc, ns_carry, man_count, pend_b_carry
+    prev_dia2 ← norm(dia2)
+    numerar Seq sequencialmente (1, 2, 3, … na ordem de processamento)
+```
+
+### 4.3 Dentro do turno (`ep_sim_v3_corrigido.simular_turno`)
+
+```
+man_t ← manobras com dt_ini <= datetime < dt_fim, ordenação estável por datetime
+se man_t vazio: devolve histórico vazio, ultima_esc = '', mantém pend_b_carry
+fila_display ← fila_ini
+z5_count ← {}                ; dia_op_atual ← nulo
+pend ← cópia de pend_b_carry
+i ← 0
+enquanto i < len(man_t):
+    dt ← man_t[i].datetime
+
+    (1) VIRADA DE DIA OPERACIONAL  (seção 5.4)
+        se dia_op(dt) ≠ dia_op_atual:
+            z5_count ← {}  ; dia_op_atual ← dia_op(dt)
+            aplicar_pendentes(dia_op_atual)
+
+    (2) VIRADA D1 → D2  (seção 5.5)
+        se ainda no D1 e dt >= dt_d2: …
+
+    (3) GRUPO DO MESMO MINUTO
+        G ← todas as manobras seguintes com datetime == dt
+        agrupar G por Vessel, na ordem da primeira aparição de cada navio
+        G ← reordenado: linhas do 1º navio, depois as do 2º, …
+        atrib ← {}                         (quem já foi atribuído neste minuto)
+
+    (4) para cada manobra m em G, nesta ordem:
+          prat ← ESCOLHER(m)               (4.4)
+          atrib[m] ← prat
+          ATUALIZAR(prat, m)               (4.5)
+          escalacao ← MONTAR_ESCALACAO(m, prat)   (seção 6.2)
+          man_count += 1 ; ultima_esc ← escalacao
+          registrar linha de saída
+
+    (5) ajuste ("catch-up") das posições dos especiais (só exibição, 6.2.3)
+    i ← primeira manobra após o grupo
+```
+
+### 4.4 ESCOLHER(m): escolha do prático (modo produção, com mapa de forçamento ativo)
+
+```
+chave ← (m.Data, m.Hora, m.Vessel)
+E ← mapa_forcamento.get(chave, [])
+para cada especial e em E (na ordem):
+    se e ∉ valores(atrib):  devolve e                    (especial fixo)
+
+# regulares
+z5 ← is_z5(m.From, m.To)
+C ← [p em fila_display, na ordem | p ∉ ESPECIAIS, p ∉ valores(atrib), disponível(p, m)]
+se z5: C ← [p ∈ C | z5_count[p] < 1]
+se C não vazio: devolve C[0]                             (primeiro disponível da fila)
+
+# ninguém disponível (fallback)
+R  ← [p em fila_display | p ∉ ESPECIAIS, p ∉ valores(atrib)]
+RZ ← R filtrado pela regra Z5 (se z5) ; se RZ vazio: RZ ← R
+p* ← elemento de RZ com menor chave (avail ≠ nulo, avail, posição em RZ)
+se p* não existe: p* ← fila_display[0]
+registrar no log de fallback: (dt, p*, avail(p*, m), Vessel, From, To)
+devolve p*
+```
+
+Desempates e detalhes:
+
+1. **Ordem de prioridade**: especial fixo → primeiro regular disponível na fila (respeitando Z5) → fallback.
+2. Entre regulares disponíveis, vale **somente a posição na fila** (não o HH:MM nem a hora em que ficou livre).
+3. A **regra Z5 vem antes da disponibilidade**: se todos os disponíveis já fizeram Z5 no dia, o motor vai ao fallback e escolhe, entre os que ainda **não** fizeram Z5, quem fica livre mais cedo, **mesmo que ainda não esteja livre**. Só se **todos** os regulares já tiverem feito Z5 é que a regra é ignorada (e aí ganha quem fica livre mais cedo, o que, havendo alguém disponível, recai num disponível).
+4. No fallback, o empate em `avail` é resolvido pela posição na fila.
+5. "Já atribuído neste minuto" (`atrib`) vale para **todas** as manobras com o mesmo `datetime`, de qualquer navio.
+6. Se o mapa de forçamento estiver **vazio** (nenhum especial na pauta toda, ou `SEM_FORCA=1`), entra o "comportamento original" (rodízio interno dos especiais por contador). Ver 9, item P3. Esse modo não é o de produção.
+
+### 4.5 ATUALIZAR(prat, m)
+
+**Se `prat` é especial** (`atualizar_esp`):
+
+- `pts_g[prat] = 0`; `last_g[prat] = {start: m.datetime, fr, to, fim}`.
+- Atualiza o contador de exibição: `next_slot[prat] = (_rr_orig.pop(prat) ou next_slot[prat]) + 12`. Não afeta a escolha.
+
+**Se `prat` é regular** (`atualizar_nao_esp`):
+
+```
+novo ← pts_g[prat] + 1
+last_g[prat] ← {start: m.datetime, fr: m.From, to: m.To, fim: m.dt_fim}
+se novo >= 2:                       # B
+    pts_g[prat] ← 0
+    pend.remove(prat)
+    mover prat para o FIM de fila_display ; marcar prat em _no_hhmm
+    status ← 'B'
+senão:                              # A
+    pts_g[prat] ← 1
+    pend.add(prat) ; desmarcar prat de _no_hhmm
+    (posição na fila não muda)
+    status ← 'A'
+se is_z5(m): z5_count[prat] += 1    # conta A e B
+```
+
+---
+
+## 5. Regras especiais
+
+### 5.1 Navios de 2 práticos
+
+- Na pauta, o navio de 2 práticos aparece em **2 linhas** iguais (mesmo `datetime` e `Vessel`).
+- `gerar_2026._completar_dois_praticos`: se `dois_prat` for verdadeiro (`'true'` ou `'1'`, sem diferenciar maiúsculas) e o grupo `(DT, Vessel, ES)` (ou `(DT, Vessel)` sem a coluna `ES`) tiver **uma só linha**, a linha é **duplicada**. A cópia é anexada ao fim e depois a pauta é reordenada (estável) por DT. Por isso a cópia fica **por último entre as manobras daquele minuto**, e não necessariamente colada na original. **[Ponto de atenção]** No motor isso não importa, porque as linhas de um mesmo navio no mesmo minuto são reagrupadas (4.3, passo 3). Na simulação E12 dos especiais, importa (5.3.3).
+- No motor, cada linha é **uma manobra independente**: cada um dos 2 práticos tem a sua A ou B, a sua contagem Z5 e a sua disponibilidade. Os dois não podem ser a mesma pessoa (exclusão por `atrib`).
+- Combinações possíveis: especial + especial, especial + regular, regular + regular.
+- `pares2` (exatamente 2 linhas) não muda a escolha no modo produção. Só é usado no ajuste de exibição dos especiais. Um grupo de 3 ou mais linhas do mesmo navio no mesmo minuto é tratado como 3 manobras com práticos distintos.
+
+### 5.2 Restrição Z5
+
+- `Z5_LIMITE_DIA = 1`: no máximo 1 manobra Z5 por prático **regular** por **dia operacional**.
+- Conta **qualquer** manobra Z5 (A ou B; origem ou destino em Z5).
+- Zera a cada virada de dia operacional e no início de cada turno.
+- Especiais não entram na contagem nem no filtro.
+- É uma restrição **forte, com relaxamento só em último caso** (4.4, desempate 3). Na execução de 01/01 a 20/10/2026, nenhum regular fez mais de 1 Z5 no mesmo dia operacional.
+
+### 5.3 Especiais (JA/SI/CH)
+
+#### 5.3.1 Princípio
+
+Os especiais fazem **exatamente os navios que fariam na E12**. O motor não decide nada sobre eles: só aplica o mapa de forçamento (4.4). As manobras dos especiais não mudam o estado E2D dos regulares, a não ser pelo fato de um regular não pegar aquela linha.
+
+#### 5.3.2 Origem da atribuição (`gerar_2026.py`, bloco 4)
+
+Para cada manobra da pauta, o prático "E12" (`pred`) é definido assim:
+
+1. **Prático real conhecido** (SPPILOTS): `real[(DT, Vessel)]` = lista de siglas obtida da coluna `Pratico` de todas as linhas do grupo, quebrando por `/` e espaço e descartando `NAN`/`NONE`, com `J()`. A pauta atual (`pauta_rt.csv`) sobrescreve o histórico na mesma chave. Se conhecido, usa-se o real.
+2. **Desconhecido** (manobra ainda não escalada no SPPILOTS): **simula-se a vez da E12** (5.3.3).
+
+Só as linhas com `pred` especial viram forçamento no motor. **As escolhas de regulares da E12 (reais ou simuladas) são ignoradas**: a E2D recalcula todos os regulares.
+
+#### 5.3.3 Simulação da vez da E12 (só para manobras sem prático real)
+
+Por dia operacional, em ordem cronológica:
+
+```
+P ← escala corrigida do dia (12 slots)       ; se o dia não existir: ('D2', 12 vazios)
+se o dia é D1 e há prático real no dia: bold ← 1º prático real do dia que está em P
+se ptr é nulo ou bold existe: ptr ← índice de bold em P (ou 0) ; buf ← []
+para cada manobra do dia (n = 2 se a linha seguinte for do mesmo navio e do mesmo DT, senão 1):
+    se a manobra tem prático real (lista R):
+        para cada uma das n linhas: nm ← R[q] (ou R[0] se faltar)
+            livre[nm] ← FIM(linha) ; se Z5: z5c[(dia, nm)] += 1
+            se nm ∈ P: k ← slot de nm
+                se k ∈ buf: remove k de buf (vez "pulada" sendo paga)
+                senão: avança ptr até k, colocando os slots pulados em buf ; ptr ← k+1
+    senão:
+        ok(q) ← P[q] existe  e  livre[P[q]] <= DT  e  não (Z5 e P[q] regular e z5c[(dia, P[q])] >= 1)
+        percorre buf (e vai estendendo buf com ptr, ptr+1, … em módulo 12) procurando slots ok;
+        a 1ª escolha fixa a "classe" (especial ou regular); a 2ª linha de um navio de 2 práticos
+        precisa ser da mesma classe;
+        se todos os 12 slots já estão em buf/escolhidos: pega o 1º ok entre os da mesma classe,
+        senão o que fica livre mais cedo (empate: ordem em buf)
+        atribui pred às n linhas ; atualiza livre e z5c
+```
+
+- `FIM(linha)` = término informado (`Termino` `HH:MM`, ajustado para o dia seguinte se for anterior ao início) ou, sem término, `início + gT` (com T **não truncado**, em ponto flutuante). Na E12 simulada **não há margem nem lancha**.
+- `N = 12` slots.
+- Limite de segurança: 200 iterações por manobra.
+
+#### 5.3.4 Aplicação no motor
+
+- Chave do forçamento: `(Data, Hora, Vessel)`. Uma chave pode ter 2 especiais (navio de 2 práticos).
+- Em cada linha, usa-se o **primeiro especial da lista ainda não atribuído no mesmo minuto**. Numa chave com `[JA]` e 2 linhas, a 1ª linha (na ordem de processamento) recebe JA e a 2ª vai para um regular.
+- O especial forçado é aplicado **mesmo que, pelo modelo E2D, ele não estivesse "disponível"**. A disponibilidade não é verificada para especiais.
+- Na execução de 2026 até 20/10: 423 manobras de especiais (JA 193, SI 190, CH 40), todas com prático real do SPPILOTS.
+
+### 5.4 Virada de dia operacional (07:30): B pendente (`_aplicar_pendentes`)
+
+Executada na **primeira manobra** de cada novo dia operacional (inclusive a primeira do turno), antes da escolha. Pode ser desligada com `PEND_OFF=1` (não usar em produção). Seja `do` o novo dia operacional e `[do−1 07:30, do 07:30)` o dia anterior.
+
+1. **Camada 1, "permanentes com ciclo aberto"**: regulares que estão na fila, cuja **última manobra começou no dia operacional anterior** e que estão com ciclo aberto (`pts_g > 0`). São retirados e reinseridos, **na ordem relativa que tinham**, na posição do primeiro não especial (o início da fila).
+2. **Camada 2, "entrantes com ciclo aberto"**: regulares que estão na fila e em `pend` (ciclo aberto), que não estão na Camada 1 e cuja última manobra **não** foi no dia operacional anterior (tipicamente, os que voltam da folga com B pendente). São reinseridos, na ordem relativa que tinham, **logo após o bloco da Camada 1**.
+   - Cálculo exato da posição: percorre a fila ignorando especiais; ao achar um da Camada 1, a posição passa a ser índice + 1; ao achar alguém que não é nem da Camada 1 nem da Camada 2, para. Depois retira os da Camada 2 e insere todos nessa posição.
+
+Também na virada: `z5_count` zera.
+
+### 5.5 Virada D1 → D2 (dentro do turno)
+
+Ocorre na **primeira manobra com `dt >= dt_d2`**, logo depois da virada de dia operacional (5.4).
+
+```
+Y_d1 ← norm(dia1) ; Y_d2 ← norm(dia2)
+se Y_d2 não vazio e conjunto(Y_d2) ≠ conjunto(Y_d1) e ultima_esc ≠ '':
+    nova ← nomes de nova_escalacao(ultima_esc, Y_d1, Y_d2)
+    se nova não vazio:
+        fila_display ← nova
+        aplicar_pendentes(dia atual)            (reaplica 5.4 sobre a nova fila)
+remapear contadores de exibição dos especiais: chave Y_d1[i] → Y_d2[i]
+```
+
+Se o conjunto de práticos de D1 e D2 for igual (mesmas pessoas, mesmo que em outra ordem de slots), **a fila continua como estava**. `ultima_esc` aqui é a escalação depois da última manobra do D1.
+
+### 5.6 Nova escalação (`nova_escalacao.nova_escalacao(ultima_esc, saindo, entrando)`) — SUBSTITUIÇÃO INDIRETA (modelo original)
+
+**Regra em vigor:** é o modelo original, o da apresentação e da planilha de 2025. De 23 a 29/10/2026 o protótipo usou a troca direta (ver "Alternativa não usada", abaixo); em 29/10/2026 a Praticagem decidiu voltar ao modelo original. A regra é usada na troca de pessoas entre D1 e D2 (5.5) e entre turnos (4.2). `saindo` e `entrando` são as listas de 12 slots, com especiais: a posição i de `entrando` é quem passa a ocupar o slot i.
+
+```
+remover vazios/'?' ; n ← min(len(saindo), len(entrando)) ; truncar as duas em n
+q_entra[saindo[i]]   ← entrando[i]     (quem entra no slot do sainte)
+q_subst[entrando[i]] ← saindo[i]       (de quem o entrante tomou o slot)
+permanece ← entrando ∩ saindo ; novos ← (entrando − saindo) − ESPECIAIS
+esc ← parse(ultima_esc) ; final ← [] ; inseridos ← {}
+para cada (p, estado) em esc, na ordem:
+    se p ∈ ESPECIAIS: pular
+    se p ∈ permanece:                                   (remanescente)
+        para cada e em entrando, na ordem:
+            se e ∈ novos, e ∉ inseridos e q_subst[e] = p: inserir e
+        se p ∉ inseridos: inserir p (estado por status_valido)
+    senão se p ∈ saindo:                                (sainte)
+        s ← q_entra[p]
+        se s ∈ novos e s ∉ inseridos: inserir s (na posição de p)
+        (se s é remanescente ou especial: nada; a posição do sainte some)
+    senão se p ∉ inseridos: inserir p (estado por status_valido)
+anexar ao fim os novos ainda não inseridos, na ordem de entrando
+remover repetidos ; manter só os 12 primeiros
+```
+
+Resumo prático:
+
+- Sainte cujo slot passa a um **novo**: o novo entra **na posição do sainte**.
+- Sainte cujo slot passa a um **remanescente que mudou de slot**: a posição do sainte **some** e os de trás sobem uma posição. O novo que ficou com o slot antigo desse remanescente entra **logo antes dele** (o remanescente "puxa" o entrante para junto de si).
+- **Slot do sainte passou a um especial:** a posição do sainte é **descartada** e os de trás sobem.
+- **Entrante sem posição herdada** (ex.: em slot que era de especial): vai para o **fim**.
+- **Sainte com B pendente** cujo slot passa a um novo: o novo herda a posição dele, mesmo que na frente; o sainte, quando voltar, entra como entrante pendente (5.4, Camada 2).
+- Os estados `(…)` são descartados pelo motor; só a **ordem** importa. O resultado nunca contém especiais.
+- Exemplos (calculados com o código em 29/10/2026):
+  - `ultima_esc = "B(09:30) > C > JA(3) > A > D"`, saindo `[A,B,JA,C,D]`, entrando `[E,F,SI,G,H]` → `F > G > E > H`.
+  - Mesma `ultima_esc`, entrando `[A,B,JA,X,D]` → `B > X > A > D`.
+  - 08/10 (slide 3): fim do dia `SP > LZ > FX > FS > LE > HI > LB > LT > LG > ZI > AG > CM`; saem FX e AG; LB muda do slot 5 para o 11 (slot de FX); NI entra no slot 5; LC no slot 12 → `SP > LZ > FS > LE > HI > NI > LB > LT > LG > ZI > LC > CM` (FS, LE e HI sobem uma posição; NI entra logo antes de LB).
+  - Caso simples: fila `X > B > C > R > D > E > F > G`; X sai, R passa ao slot de X e N entra no slot de R → `B > C > N > R > D > E > F > G`.
+- Conferência: o código atual dá o mesmo resultado que a versão de 21/04/2026 (anterior à troca direta) em 30.000 casos aleatórios.
+
+**Alternativa não usada: troca direta** (`REORD=direto`, usada no protótipo de 23 a 29/10/2026). Cada sainte é substituído, na mesma posição da fila, pelo entrante do seu slot, seguindo a cadeia de slots; os remanescentes não mudam de posição. Exemplos: 08/10 → `SP > LZ > NI > FS > LE > HI > LB > LT > LG > ZI > LC > CM`; caso simples → `N > B > C > R > D > E > F > G`. Em 2026 ela evitava que remanescentes perdessem 1 a 2 posições em 171 casos (81 viradas), com indicadores agregados praticamente iguais. O resultado esperado com ela está em `testes/esperado_alternativo/E2D_esperado_troca_direta.csv` (reproduz 100% com `REORD=direto`).
+
+### 5.7 B pendente na virada de turno (entre turnos)
+
+Combina duas regras:
+
+1. No laço de turnos (4.2): entrantes que voltam da folga (não estavam no `dia2` anterior) e estão em `pend_b_carry` vão para o início de `fila_ini`.
+2. Na primeira manobra do turno, `_aplicar_pendentes` (5.4) roda de novo: esses entrantes caem na Camada 2 e ficam logo após eventuais permanentes da Camada 1.
+
+Efeito: quem voltou da folga com a A feita é o primeiro da fila e tende a fazer a B logo na abertura do turno.
+
+### 5.8 Ninguém disponível (fallback)
+
+Ver 4.4. Comportamento a reproduzir:
+
+- O escolhido é quem **fica livre mais cedo** (respeitando Z5, se possível).
+- A manobra é atribuída **no horário da pauta**. O motor não simula atraso: a `last_g` do prático passa a ser o início programado dessa manobra.
+- O evento é registrado em `_FALLBACK_LOG` / `FB_OUT` como `(datetime, prático, hora em que ficaria livre, navio, de, para)`. Na execução de 2026 até 20/10: 6 casos (ex.: 25/02 17:45 NI, livre às 18:15, BETTY FB→23).
+
+### 5.9 Práticos que entram ou saem e trocas
+
+- A **escala do dia** vem da aba RESUMO, já com as trocas planejadas.
+- **Escala real do SPPILOTS (desde 25/10/2026):** se existe `inputs/escala_grafica.json` (gerado por `escala_grafica.py`, 5.15), ele substitui a escala planejada slot a slot, nos dias em que pelo menos 10 dos 12 slots foram lidos; slot sem leitura mantém o planejado. A correção abaixo é aplicada depois.
+- **Correção pelo que aconteceu de fato** (`gerar_2026.corrigir(plan, seq)`), aplicada a cada dia que tem manobras com prático real:
+  - `seq` = práticos que manobraram naquele dia operacional, na ordem da primeira manobra (pelo SPPILOTS; com o mesmo minuto, na ordem de leitura).
+  - `outs` = slots de regulares planejados que **não** manobraram no dia (slots vazios também contam).
+  - `ins` = regulares que manobraram **sem** estar na escala, na ordem de `seq`, limitados a `len(outs)`.
+  - Testam-se **todas** as formas de colocar `ins` nos `outs` (permutações). Escolhe-se a de **menor custo**; no empate, a primeira encontrada.
+  - Custo (`_custo`): considerando só os regulares da escala resultante, é o menor número, entre as 12 rotações possíveis, de inversões da ordem real `seq` em relação à ordem dos slots. Ou seja, escolhe a colocação que deixa a vez real da E12 "mais em ordem".
+  - Se não há `ins` ou não há `outs`, a escala planejada fica como está. Planejado que não manobrou e não foi substituído **continua na escala**.
+  - Especiais nunca são movidos por essa correção.
+- Troca de pessoas entre D1 e D2 → 5.5. Entre turnos → 4.2 e 5.6.
+- A disponibilidade é sempre calculada a partir da última manobra real do prático no histórico simulado. Por isso, quem emenda dias por troca continua sujeito ao seu HH:MM.
+
+### 5.10 Montagem dos turnos (`gerar_2026.py`, bloco 3)
+
+```
+para cada dia d com TIPO == 'D1' (em ordem):
+    d2  ← d + 1
+    nxt ← próximo dia com TIPO == 'D1' (ou d + 2)
+    dia1 ← escala[d] ; dia2 ← escala[d2] (ou dia1, se d2 não existir)
+    turno ← {dt_ini: d 07:30, dt_d2: d2 07:30, dt_fim: nxt 07:30, dia1, dia2, Y: dia1}
+manter só os turnos com dt_ini <= última manobra da pauta
+1º turno: se o 1º prático real do dia está em dia1, Y ← dia1 girado para começar por ele
+```
+
+Manobras anteriores ao primeiro `dt_ini` ou fora de qualquer turno **não são processadas**.
+
+### 5.11 Montagem da pauta (`gerar_2026.py`, bloco 1)
+
+1. Lê os CSVs e duplica as linhas de 2 práticos que vieram com uma só linha (5.1).
+2. `corte = maior DT do histórico + 1 min`. Pauta = **todas** as linhas do histórico (com `DT < corte`) + linhas de `pauta_rt.csv` com `DT >= corte`.
+3. Ordenação estável por `DT`. **A ordem das manobras do mesmo minuto é a ordem de leitura**: histórico (ordem do CSV) antes da pauta atual, e cópias de 2 práticos por último no minuto.
+4. Sem histórico: lê `inputs/Pauta_de_Manobra_2026.xlsx` (`Data`, `Hora`, `Vessel`, `From`/`To` ou `De`/`Para`).
+5. Grava `_pauta_live.xlsx` com `Data = DT em DD/MM/AAAA`, `Hora = DT em HH:MM`, `Termino`, `Vessel`, `From`, `To`.
+
+### 5.12 Ordem de processamento das manobras do mesmo horário
+
+1. Ordem da pauta (5.11), preservada pela ordenação estável do motor.
+2. No motor, as manobras com o **mesmo `datetime`** formam um grupo. Os navios do grupo são processados **na ordem da primeira aparição de cada um**, e as linhas de um mesmo navio ficam juntas (4.3, passo 3). Não há prioridade de "par antes de solo" nem por tipo de manobra.
+3. Cada linha escolhe o prático depois de a linha anterior ter atualizado a fila. Exemplo: se a 1ª linha foi uma B, aquele prático já foi para o fim da fila antes da 2ª linha.
+
+Consequência: o **Seq da saída é a ordem de processamento**, que pode diferir do índice da linha na pauta (ex.: 27/01/2026 07:30 AGILITY DIVA, linhas 912 e 915 na pauta, sai com Seq 912 e 913). **[Ponto de atenção]**
+
+### 5.13 Draga: manobras em sequência ficam com o mesmo prático (27/10/2026)
+
+> **Provisório:** regra ainda em definição pela Praticagem (28/10/2026). Implementada como descrita abaixo até a decisão final.
+
+Caso típico: draga que entra, vai até um ponto e volta, várias vezes por dia. Regra da Praticagem: **duas manobras seguidas da draga, em sequência, são feitas pelo mesmo prático, como A e B do mesmo ciclo**, em qualquer combinação (entrada + saída, saída + entrada, com mudança). Se não for em sequência, segue a regra normal.
+
+Implementação (`ep_sim_v3_corrigido.simular_turno`, bloco "DRAGA", antes do laço de manobras):
+
+1. **Candidato a draga:** navio com **4 ou mais manobras (horários distintos)** em ±36 h da manobra. Navio de 2 práticos (duas linhas no mesmo horário) **nunca** entra.
+2. **Em sequência:** a próxima manobra do mesmo navio (horário posterior) começa **onde a anterior terminou** (`De` da 2ª = `Para` da 1ª) e **até 30 min depois do fim previsto** da 1ª (início + T).
+3. **Prioridade:** primeiro os pares em que a 2ª começa antes do fim previsto da 1ª (o prático ainda está a bordo); depois os demais. Cada manobra entra em no máximo um par (**pares não se encadeiam**).
+4. **1ª manobra do par:** vai para o primeiro prático **livre e sem ciclo aberto** da fila (respeitando Z5); ele fica **reservado** (não pode ser escolhido para outra manobra) até a 2ª.
+5. **2ª manobra do par:** vai para o mesmo prático, que fecha o ciclo (B) e vai para o fim da fila.
+6. Se a 1ª foi para um especial, a regra não se aplica (segue normal).
+
+Exemplos no conjunto de teste: HAM 316 (28–29/09/2026, 4 pares, reproduz a E12 real), UTRECHT (26–27/07, 5 pares), HANG JUN 6009 (25/04, 3 pares). Correção de 28/10/2026: a primeira versão contava linhas (e não horários) e juntava as duas linhas de um navio de 2 práticos (MSC AINO, 15/02); corrigido nos itens 1 e 2.
+
+### 5.14 Giro sem atracar (FB → FB) (27/10/2026)
+
+> **Provisório:** regra ainda em definição pela Praticagem (28/10/2026). Implementada como descrita abaixo até a decisão final.
+
+Manobra em que o navio entra, gira numa bacia e sai sem atracar (ex.: "entrada, giro e saída do TECON"). T pela linha `GIRO <área>` da tabela de T:
+
+| Linha | T (min) |
+|---|---|
+| GIRO TECON | 90 |
+| GIRO EMBRAPORT | 135 |
+| GIRO BTP | 155 |
+| GIRO ALEMOA | 160 |
+
+Base: T ≈ 33 + 13,3 × d (d = distância da estação de praticagem à bacia de giro, em milhas; velocidade 9 nós, 1 milha para reduzir e 1 para retomar, giro de 20 min). Distâncias informadas pela Praticagem: Embraport 7,5 nm; bacia do BTP 9 nm.
+
+Área: `gerar_2026.py` procura no texto da pauta (colunas OBS/Agente/Celulas) as palavras EMBRAPORT/DP WORLD, BTP, ALEMOA, TECON/SANTOS BRASIL; sem área identificada, GIRO TECON. Resultado em `motor_e2d/_giro_T.pkl` (chave `(AAAA-MM-DD HH:MM, 'FB', 'FB')`), passado ao motor pela variável `BTP_OV`. O painel lê o mesmo `_giro_T.pkl` (função `_gT_m` de `ep_atualizar.py`, desde 28/10/2026) para o fim efetivo da manobra, a disponibilidade da coluna lateral, o "⚠ livre hh:mm" e o ⚠ de observação. Antes disso, o painel usava 60 min para qualquer FB → FB.
+
+### 5.15 Escala real pela escala gráfica do SPPILOTS (provisório, 25/10/2026)
+
+Hoje o único lugar onde se vê quem realmente trabalha em cada dia (com as trocas) é a **escala gráfica** do SPPILOTS (`escalas_anuais.asp`, POST `mes`/`ano`), que vem como **imagem**. `escala_grafica.py` lê essa imagem:
+
+- 6 blocos de 12 colunas; bloco = grupo. Bloco do D1 = `((dias desde 01/01)/2 + 2) mod 6`.
+- Linha do D1/D2 = dono do slot; dono riscado = não trabalha. Substitutos acima da linha do D1 (para o D1) e abaixo da linha do D2 (para o D2), empilhados; quem trabalha = o primeiro não riscado, do dono para fora.
+- Siglas reconhecidas por comparação com o banco de modelos `escala_grafica_modelos.npz` (numpy + Pillow, sem OCR externo); aprende com as siglas confirmadas pelo histórico.
+- Grava `inputs/escala_grafica.json` (`{"AAAA-MM-DD": [12 siglas ou null]}`).
+
+**Em produção isso não deve existir:** a escala e as trocas estão no banco do SPPILOTS, de onde a imagem é gerada. Basta ler de lá e montar os turnos (5.10) no mesmo formato.
+
+### 5.16 Escalação congelada e manobras já iniciadas fora do histórico (28/10/2026)
+
+**Escalação congelada.** Regra da Praticagem (29/10/2026): **manobra que já começou ou já terminou não muda mais, porque é passado.** O protótipo recalcula tudo a cada rodada; sem o congelamento, uma mudança na pauta (atraso, cancelamento, navio novo) trocava o nome de quem já tinha feito a manobra.
+
+1. **Quando congela.** Quando a linha fica **azul** na pauta do SPPILOTS (manobra começou: `PROXIMO`/`CONFIRMADO`) ou **vermelha** (terminou: `AGENDADO`/`EXECUTADO`), ou quando a manobra já está no histórico. Linhas **brancas** (`FUTURO`) e **lilases** (`BREVE`) ainda podem mudar, inclusive quando o navio atrasa.
+2. **Registro** (`gerar_2026.py`, logo depois de rodar o motor). Para cada manobra azul/vermelha da saída do motor que ainda não esteja no arquivo e cujo prático seja regular (nunca JA/SI/CH), grava uma linha em `dados/escalacao_finalizada.csv` (`DT` início, `Vessel`, `Pratico`, `registrado_em`). Navio de 2 práticos grava uma linha por prático. Linha gravada nunca é alterada.
+3. **Uso** (`gerar_2026.py` + motor). A cada rodada o arquivo vira o dicionário `{(dd/mm/aaaa, hh:mm, navio): [práticos]}` em `motor_e2d/_congeladas.pkl`, passado ao motor pela variável de ambiente `FROZEN` (`motor_e2d.py` guarda em `sim._FROZEN_KEY`). Em `ep_sim_v3_corrigido.simular_turno`, no início do processamento de cada manobra (antes da regra da draga, dos especiais forçados e do ESCOLHER), se existe prático congelado para a chave que ainda não foi usado por outra linha do mesmo horário, **ele é o prático da manobra**. Não se testa disponibilidade, Z5 nem posição na fila, porque a manobra já aconteceu. O resto do processamento (A/B, fila depois da B, contagem de Z5, exibição) segue igual. **Exceção:** se a manobra é de especial pelo mapa da E12 (`_ESP_ATRIB_FORCADAS_KEY`), o congelamento é ignorado e vale o especial, porque os especiais ficam sempre como na E12 (caso: GOLDEN THETIS, 29/10/2026 10:30).
+
+Pontos de atenção:
+- Histórico da regra: de 28/10/2026 11:40 a 29/10/2026 o protótipo congelava 1 h antes da manobra, e o primeiro congelamento prendeu todo o passado, que tinha sido simulado com a troca direta. Em 29/10/2026 esse congelamento foi **descartado** (decisão da Praticagem: não se congela o que foi gerado errado). O painel foi refeito do zero com as regras corretas e, a partir daí, vale a regra da linha azul/vermelha. `dados/escalacao_congelada.csv` fica guardado, sem uso.
+- Em produção, quem grava é o sistema, no momento em que a manobra começa (banco de dados), e não este arquivo.
+- Sem o arquivo, ou sem `FROZEN`, o motor se comporta exatamente como antes: o conjunto de teste (`testes/`) não usa congelamento e continua 100% igual. A regra é testada por `testes/testar_congelamento.py` (inclusive a exceção dos especiais, teste 3).
+
+**Manobras já iniciadas e ainda fora do histórico ("órfãs").** O histórico raspado (`historico_2026.csv`) vale até a última manobra raspada, e a pauta atual (`pauta_rt.csv`) só entrava depois disso. Uma manobra já iniciada que ainda estava só na pauta atual ficava de fora do painel até a raspagem seguinte do histórico. Hoje (`gerar_2026.py`, bloco 1) ela é mantida, desde que: (a) o início seja anterior ao corte (última manobra do histórico + 1 min); (b) qualquer status, inclusive `FUTURO` (até 29/10/2026 as brancas ficavam de fora; uma branca atrasada com prático escalado, ex.: KACEY 29/10 11:30 com o SI, sumia, a vez da E12 não andava e o especial era previsto na manobra seguinte); (c) não exista no histórico manobra do mesmo navio com os mesmos `De`/`Para` dentro de ±6 h (evita duplicar). A linha entra pela pauta atual e a rodada registra "[pauta] N manobra(s) já feitas ainda fora do histórico: mantidas pela pauta atual".
+
+### 5.17 Manobra cancelada depois da escalação (29/10/2026)
+
+Regra da Praticagem (29/10/2026). Vale só quando a manobra é cancelada **depois de já ter prático escalado**, ou seja, a menos de 1 h do início, com o bigrama já escolhido. No SPPILOTS essa linha fica **verde**. Cancelamento de linha branca ou lilás (ainda sem escalação) não tem regra especial: a manobra simplesmente sai da pauta e tudo segue normal.
+
+1. **A manobra não conta.** Não é A nem B, não conta para o limite de Z5 e não mexe no ciclo do prático. Se ele já tinha feito a A e a cancelada seria a B, a próxima manobra dele continua sendo a B.
+2. **O prático vai para a frente de todos** na fila, inclusive de quem está esperando com horário.
+3. **Vale para a próxima manobra ainda não escalada.** As manobras que começam antes de (hora em que o cancelamento foi visto + 1 h) já tinham prático escalado e ficam com quem estava; ele só pode pegar manobra que comece a partir desse horário.
+4. Especial (JA/SI/CH) não entra nesta regra: os especiais seguem sempre como na E12.
+
+Implementação no protótipo:
+- O script do navegador (v1.4) envia a linha verde com status `CANCELADA` (a amarela, sem prático, continua ignorada).
+- `gerar_2026.py` tira a linha da pauta normal e a grava em `dados/manobras_canceladas.csv` (`DT`, `Vessel`, `From`, `To`, `Pratico`, `visto_em`), uma linha por prático; `visto_em` = hora da rodada em que o cancelamento apareceu. A manobra volta à pauta do motor só como marcação, e a chave vai para o motor em `motor_e2d/_canceladas.pkl` (variável de ambiente `CANCEL`; `motor_e2d.py` guarda em `sim._CANCEL_KEY`). Quando o prático já foi registrado, ele é passado como congelado (5.16), para que a cancelada fique com quem estava escalado; senão, o motor escolhe normalmente e o prático escolhido é registrado no arquivo depois da rodada.
+- Em `ep_sim_v3_corrigido.simular_turno`, depois de escolhido o prático da cancelada: ele sai da fila e entra na posição 1; recebe `_nao_antes[prático] = visto_em + 1 h` (testado em `is_avail`); a linha vai para a saída com status `CA` ou `CB` (C + o que ela seria: A, ou B se o prático já tinha feito a A), e o laço segue para a próxima manobra sem contar a manobra, sem Z5 e sem A/B. A regra da draga ignora as canceladas.
+- O painel mostra a linha cancelada em **verde**, como no SPPilots, com o prático que estava escalado e, na coluna A/B, o que ela seria (A ou B). O Δt conta como se ela tivesse acontecido: na linha verde, do início da manobra anterior do prático até o horário da cancelada; na manobra seguinte dele, do horário da cancelada até o início dela (decisão da Praticagem, 29/10/2026; ex.: LC, B 07:30, cancelada 13:30 → 6h00; nova A 15:00 → 1h30) (`ep_atualizar.py`, lendo `pauta_rt.csv` e `ao_vivo/canceladas_painel.csv`, gerado pelo `gerar_2026.py`). Ela não entra em nenhum cálculo do painel.
+- Sem o arquivo, ou sem `CANCEL`, o motor se comporta exatamente como antes (o conjunto de teste continua 100%). A regra é testada por `testes/testar_cancelamento.py` (uma A e uma B canceladas).
+- Efeito esperado: depois da cancelada, todo mundo "anda uma casa" (a manobra seguinte que seria de outro passa para o prático da cancelada, e assim por diante). A previsão dos especiais para as manobras ainda não escaladas no SPPILOTS (contador da E12) também anda uma casa, como aconteceria na E12; quando o SPPILOTS escala a manobra, vale o nome real. Caso real: BOW ARCHITECT, 29/10/2026 13:30 (LC), cancelado às 12:46: o LC passa para o XING YANG HAI das 14:00 e a previsão do JA passa para o ARIES STAR das 14:00.
+- Em produção, quem registra é o sistema, no momento do cancelamento (banco de dados).
+
+---
+
+### 5.18 Margem extra (aprovada em 05/11/2026; ainda não implementada no código de referência)
+
+**Para que serve:** evitar que a manobra seguinte atrase quando a anterior ainda não terminou na hora da escalação, sem abrir espaço para manipulação. Vale para a **B** (escalado ainda na A) e também para a **A** (escalado ainda na B do ciclo anterior; caso raro, ~9 em 10 meses de 2026) — decisão do Rodrigo em 05/11/2026.
+
+**Regra:**
+1. A escalação continua 1 h antes do início da manobra, pela fila normal (§4.4).
+2. O prático escalado **pode pedir margem extra** se, no momento da escalação, as duas condições valem ao mesmo tempo:
+   - ele **ainda está a bordo** do navio da manobra anterior (a A, ou a B do ciclo anterior); e
+   - a escalação acontece **até o fim previsto da manobra anterior pela tabela**: início dela + T, sem nenhum acréscimo (janela = T; decisão do Rodrigo em 05/11/2026).
+3. **Efeito do pedido:** a disponibilidade dele ganha **+1 h** (a conta de §3.11 mais 60 min) e ele **mantém a posição na fila**. A manobra vai para o próximo prático disponível, pela regra normal.
+4. Fora dessas condições (a manobra anterior já passou do T pela tabela, ou o prático já desembarcou) **não há margem extra**: vale a escalação normal.
+5. Não muda as margens (45 min antes de entrada, 25 min antes de saída ou mudança). Atraso de até 10 min é tolerado.
+
+**Por que a janela é o T:** o T é tempo de tabela, conhecido por todos antes da manobra. Quem prolongar a A de propósito só ganha o direito se a escalação cair dentro do T, e o custo é perder 1 h de descanso. Prolongar dentro do T é ajuste pessoal, não atraso.
+
+**Dados para o sistema:** o pedido é registrado pelo operador (prático, manobra recusada, horário do pedido). Fica no log, para acompanhar a frequência. No painel, a oportunidade aparece como **M** na coluna PRT (06, 6.5).
+
+**Pedidos repetidos:** o prático pode pedir **quantas vezes quiser**, desde que, em cada escalação, as duas condições do item 2 continuem valendo (a bordo e dentro do T). Cada pedido soma +1 h à disponibilidade dele naquele momento (decisão do Rodrigo, 05/11/2026).
+
+### 5.19 Tabela de T das mudanças: método de cálculo (06/11/2026)
+
+**Para que serve.** O T de uma mudança de berço entra na disponibilidade do prático (3.11): `início + T + margem + lancha`. O motor só consulta a tabela pronta (`T_mud`, 3.7). Esta seção registra **como a tabela é calculada**, para que possa ser refeita com dados novos e conferida por qualquer pessoa.
+
+**Dados.** Todas as mudanças (nem `De` nem `Para` é `FB`) com início e término registrados:
+- 2025: `Pauta de Manobra 2025.xlsx` (início = `Data` + `Hora`; término = `Termino`, no dia seguinte se for anterior ao início);
+- jan–set/2026: `Pauta_2026_consolidada.xlsx` (coluna `Duração (min)`), sem repetir navio de 2 práticos;
+- só durações entre 10 e 400 min. Total usado em 06/11/2026: **717 mudanças** (437 de 2025 + 280 de 2026).
+
+**Grupos de berços (definidos pela Praticagem em 06/11/2026).**
+
+| Grupo | Berços |
+|---|---|
+| Cosipa | COS 2, COS 3, COS 4, TIP-2, TIP-3, TIP-4, ULT |
+| Alemoa | AL 1, AL 2, AL 3, AL 4, TRSP |
+| BTP | BTP-1, BTP-2, BTP-3 |
+| Saboó | VAL, CORTE, CS 1, CS 2, CS 3, CS 4 |
+| Ilha | IB BC, IB SP, AGEO, IB-OE |
+| Embraport | EMBR., EMB-1, EMB-2, EMB-3, EMB-4, EMB-1/2 |
+| 12P–20/21 | 12-A, 12-P, 13/14, 16/17, 19, 20/21 |
+| 23–OUT | 23, 25, OUT-1, OUT-2, OUT-3, OUT 2/3 |
+| 29–34 | 29, 29A, 29/30, 30, 31, 31/32, 32, 32/33, 33, 34 |
+| 35–39 | 35.1, 35.2, 37.1, 37.2, 38, 39 |
+| DOW–TGG | DOW, CTRLE, TEAG, TEG, TERMG, TGG |
+| Tecon | TC 1.1, TC 1.2, TC 2, TC 3, TEV |
+| SAIPEM | SAIPEM 1, SAIPEM 1/2, SAIPEM 2, SAIPEM 3 |
+
+Berço fora da lista forma um grupo só dele.
+
+**Zonas para o último nível.** As de `BERCO_ZONE` (8.1), com a **Z3 dividida em duas**, porque as distâncias são muito diferentes:
+- **Z3 sul:** grupos 12P–20/21 e 23–OUT;
+- **Z3 norte:** grupos Saboó, Ilha e Embraport.
+
+**Regra.** Para cada par direcional `De → Para`, usa-se o **primeiro nível da lista que tenha pelo menos 5 mudanças**:
+
+| Nível | Mudanças usadas | Valor |
+|---|---|---|
+| 1. berço → berço | as do próprio par, **no mesmo sentido** | mediana |
+| 2. grupo → berço ou berço → grupo | origem pelo grupo e destino exato, ou origem exata e destino pelo grupo; usa o lado que tiver **mais** mudanças | mediana |
+| 3. grupo → grupo | grupo da origem → grupo do destino | mediana |
+| 4. zona → zona | par de zonas, sem sentido (Z3 sul e norte separadas) | **P60** (valor que cobre 6 de cada 10 mudanças) |
+| 5. regra provisória (Z4) | mudança dentro da Alemoa ou dentro do BTP, que têm poucos casos | valor fixo (ver abaixo) |
+
+- Todo valor é **arredondado para cima em múltiplos de 5 min**.
+- **Por que mediana nos níveis 1 a 3:** o grupo é parecido com o par; a mediana não é puxada por uma mudança atípica (atraso, espera de rebocador).
+- **Por que P60 na zona:** a zona mistura berços próximos e distantes; a mediana ficaria baixa para os pares mais longos.
+- **Sentido:** os níveis 1 a 3 respeitam o sentido (A → B é diferente de B → A), porque em vários pares o tempo muda com o sentido (ex.: TEV → VAL 72,5 × VAL → TEV 65; AL 4 → IB BC 75 × IB BC → AL 4 60). Somar os dois sentidos foi testado em 06/11/2026 e **não foi adotado** (decisão da Praticagem).
+- **Mudança no mesmo berço** (ex.: 33 → 33) segue a mesma regra; com menos de 5 mudanças, usa o grupo.
+- **Nível 5, regra provisória (Praticagem, 06/11/2026).** Dentro da Alemoa e dentro do BTP houve só 4 mudanças em 21 meses (AL 1 → AL 1 82; AL 3 → AL 4 70; BTP-2 → BTP-3 60; BTP-3 → BTP-3 100 min), poucas para calcular. Valores fixos, com folga pela incerteza (lógica de P60/P75):
+  - **Alemoa → AL 1 ou AL 2: 90 min** (amarração em AL 1 e AL 2 é mais complexa e demora mais);
+  - **Alemoa → AL 3 ou AL 4: 75 min**;
+  - **BTP → BTP: 80 min** (as manobras do BTP são bem mais longas que as do Tecon e do Embraport: T de entrada/saída 100–105 contra 60–90; por isso os 60 min das mudanças internas desses terminais não foram usados).
+  - Todas as combinações AL 1–AL 4 entre si e BTP-1–BTP-3 entre si estão na tabela (25 linhas).
+  - **Substituição:** é provisório. Quando a tabela for recalculada e o grupo (Alemoa → Alemoa ou BTP → BTP), o par ou o berço tiver 5 ou mais mudanças reais, o valor calculado pelos níveis 1 a 4 substitui o provisório.
+- **Mudanças entre Alemoa, BTP e Cosipa não ocorrem na operação** (petróleo, contêiner e granel), por isso não têm T.
+**Par que não está na tabela (par novo; Praticagem, 06/11/2026; `ep_algoritmo.tm_par_novo`).** Para uma mudança cujo par nunca ocorreu:
+1. **Berço vizinho mais próximo:** troca a origem **ou** o destino pelo berço mais perto (distância da Atalaia, `DIST_ATALAIA`; mesma zona, com a Z3 dividida em sul e norte) cujo par esteja na tabela, **no mesmo sentido**, e usa o T desse par. Vizinhos à mesma distância: mediana dos T deles, arredondada para cima em múltiplos de 5.
+2. Se não houver vizinho: o **par inverso** (destino → origem), se estiver na tabela.
+3. Se não houver nenhum dos dois: o **P60 das mudanças reais do par de zonas** (`TM_ZONA`, 8.3).
+4. Senão, 60 min.
+
+Teste (06/11/2026): 72 pares conhecidos com 3 ou mais mudanças, cada um tratado como se fosse novo. Erro médio contra a mediana real: só zona (P60) 9,5 min; vizinho → inverso → zona 5,6 min. Usar o inverso antes do vizinho piora (6,8 min), porque o sentido muda o tempo em vários pares; juntar mudanças reais de vários vizinhos e tirar o P60 também piora (9,7 min). Desempate pela mediana: menor T dá 5,1 min, mas subestima mais; maior T dá 6,4 min.
+
+Exemplos: TC 1.2 → BTP-2 → vizinho TC 2 → BTP-2 (TC 2 fica a 0,1 milha do TC 1.2) = 90; 12-P → 12-A → vizinho 13/14 → 12-A = 70; 23 → BTP-1 (nenhum vizinho da Z3 sul vai ao BTP-1 nem existe o inverso) → zona Z3 sul ↔ Z4 = 95.
+- O **giro sem atracar (FB → FB)** não é mudança: continua com a regra 5.14.
+- Por que 5 e não menos: a maioria dos pares tem 1 ou 2 mudanças, e uma mudança isolada pode ter sido um atraso. Ex.: 12-A → 39 teve uma única, de 150 min; o T dele (75) vem das 8 mudanças de 12P–20/21 → 35–39.
+
+**Exemplos (tabela de 06/11/2026).**
+
+| Mudança | Mudanças do par | Nível usado | Base (mudanças) | T |
+|---|---|---|---|---|
+| 32 → EMB-4 | 30 | 1. berço → berço | o par (30) | 65 |
+| IB SP → DOW | 4 | 2. grupo → berço | Ilha → DOW (12) | 75 |
+| TIP-3 → 16/17 | 4 | 2. berço → grupo | TIP-3 → 12P–20/21 (8) | 120 |
+| EMB-3 → 34 | 3 | 3. grupo → grupo | Embraport → 29–34 (11) | 60 |
+| DOW → AL 4 | 2 | 4. zona → zona | Z2 ↔ Z4 (35) | 105 |
+| AL 3 → AL 4 | 1 | 5. regra provisória (Z4) | Alemoa → AL 3/AL 4 | 75 |
+
+**Uso do T na escala.** Mudança 32 → EMB-4 às 10:00, próxima manobra do prático é saída do TC 3: disponível = r15(10:00 + 65 + 25 + 8 de lancha) = 11:45.
+
+**Resultado em 06/11/2026.** 314 pares na tabela (antes 207). Pares por nível: 35 berço → berço, 95 grupo → berço/berço → grupo, 93 grupo → grupo, 65 zona, 25 regra provisória da Z4 (4 já tinham ocorrido, 21 acrescentados), mais o giro FB → FB (5.14). Em relação à tabela anterior (grupos por zona), 67 pares mudaram (37 subiram, 30 desceram; mediana 10 min; nenhum ≥ 30 min). Erro médio contra o término real: 10,8 → 10,7 min; mudanças que passam do T em mais de 25 min: 51 → 50.
+
+**Arquivos.**
+- Tabela usada pelo motor: `inputs\Tempo_T__2025_.xlsx` e `motor_e2d\inputs\Tempo_T__2025_.xlsx`, aba `Mudanças de entre berços` (cópias anteriores: `Tempo_T__2025__antes_mudancas.xlsx`, `Tempo_T__2025__antes_grupos.xlsx`).
+- Consulta: `estudos\T_mudancas_consulta.xlsx` — por par: T, ocorrências do par, durações reais, nível e base usados, ocorrências na base, T anterior; aba `Grupos`.
+
+**Atualização (regra definida pela Praticagem em 06/11/2026, para o sistema de produção).** Vale para a tabela de mudanças e para a tabela de T de entrada e saída por berço.
+- **Janela móvel de 24 meses completos.** Dois anos cobrem duas vezes cada estação (temporada de cruzeiros, safras), sem que uma pese mais que a outra.
+- **Recálculo a cada 3 meses** (janeiro, abril, julho e outubro), só com meses já fechados: saem os 3 meses mais antigos e entram os 3 mais recentes.
+
+| Recálculo em | Dados usados | Sai | Entra |
+|---|---|---|---|
+| janeiro/2027 | jan/2025 a dez/2026 | — | — |
+| abril/2027 | abr/2025 a mar/2027 | jan–mar/2025 | jan–mar/2027 |
+| julho/2027 | jul/2025 a jun/2027 | abr–jun/2025 | abr–jun/2027 |
+| outubro/2027 | out/2025 a set/2027 | jul–set/2025 | jul–set/2027 |
+
+- **Mesmo método** desta seção (níveis, mínimo de 5, mediana/P60, arredondamento para cima em múltiplos de 5). A regra provisória da Z4 e qualquer outro valor provisório são substituídos automaticamente quando o nível calculado passar a ter 5 ocorrências.
+- **Conferência antes de entrar em uso:** o sistema lista os pares (e berços) cujo T muda 15 min ou mais em relação à tabela em uso; a Praticagem aprova antes da troca. Evita que um erro de dado mude o T sem ninguém ver.
+- **Fonte dos tempos reais:** o sistema deve gravar início e término reais de **toda** manobra encerrada (hoje só existe na pauta de serviço exportada à mão; a Consulta de Serviços do SPPilots tem os campos INÍCIO e TÉRMINO por manobra — ver `tempos_passageiros.py`, que já faz isso para navios de passageiros).
+- **Estado atual do protótipo (06/11/2026):** as tabelas ainda são fixas e recalculadas à mão (mudanças: 2025 + jan–set/2026; entrada e saída: 2025). O T de navio de passageiros (5.20) já é automático e não segue esta janela: usa as 10 manobras mais recentes de cada navio em cada berço.
+
+### 5.20 T de navio de passageiros (06/11/2026)
+
+- **Quem é:** tipo de navio "PASSENGER" na Consulta de Serviços do SPPilots (`dados\navios_tipo.csv`), mais a lista manual `inputs\navios_passageiros.csv`.
+- **T, nesta ordem:** 1) linha com o nome do navio em `inputs\T_passageiros.csv` (manual); 2) T automático do navio (`inputs\T_passageiros_auto.csv`); 3) linha `*` do berço em `T_passageiros.csv` — hoje só o **25: entrada 75, saída 60** (P75 de 78 entradas e 79 saídas de passageiros no 25, 2024/25–2025/26); 4) T do berço.
+- **T automático:** a cada rodada o sistema lê início e término reais do SPPilots (`tempos_passageiros.py`). Com **3 ou mais** manobras do navio no mesmo berço e tipo (E/S), usa a mediana das 10 mais recentes, arredondada para cima em múltiplos de 5, **se ficar 10 min ou mais longe do padrão**. Nenhuma manobra é descartada; um caso isolado não move a mediana. Mudanças registradas em `dados\T_passageiros_mudancas.csv` (não aparecem no painel).
+- **Navio de carga não entra** (vários práticos fazem o mesmo navio de jeitos diferentes). SAIPEM avaliada e mantida com o T do berço.
+- Exemplo: BUENAVISTA, entradas no 25 de 120, 115 e 100 min → entrada 115.
+
+## 6. Saída
+
+### 6.1 Planilha do motor (`E2D_OUT`, aba `E2D 2025`)
+
+Linha 1: cabeçalho. Colunas:
+
+| Col. | Nome | Conteúdo |
+|---|---|---|
+| A | `Seq` | Número sequencial (1..N) na ordem de processamento |
+| B | `Data` | `DD/MM/AAAA` (texto da pauta) |
+| C | `Hora` | `HH:MM` (início) |
+| D | `Termino` | `HH:MM` ou vazio (informativo) |
+| E | `Pratico` | Sigla |
+| F | `Navio` | `Vessel` |
+| G | `De` | Berço de origem |
+| H | `Para` | Berço de destino |
+| I | `Status` | `A`, `B` ou vazio (especiais) |
+| J | `Escalacao` | Fila após a manobra (6.2) |
+
+- `Status = 'B'` se a manobra fechou o ciclo. `Status = 'A'` se não fechou, o acumulado ficou em 1,0 e o prático não é especial. Vazio para especiais.
+- **Divisória de dia**: antes da 1ª manobra de cada novo dia operacional (exceto o primeiro), uma linha com `"<n> Manobras"` na coluna A, em que *n* é o total de manobras do dia operacional **anterior**. As demais células ficam vazias. O último dia não tem divisória final.
+- Formatação (informativa): especial verde-claro `#D5E8D4`; B verde `#D5F5E3`; A vermelho-claro `#FADBD8`; linhas alternadas `#EBF5FB`; divisória `#2C3E50` com texto amarelo.
+
+### 6.2 Formato da escalação (`make_esc`)
+
+Texto com os elementos separados por `" > "` (espaço, `>`, espaço). Representa a fila **depois** de aplicada a manobra da linha, avaliada no **horário e na origem dessa manobra**.
+
+Exemplo real (01/01/2026, Seq 2):
+`BD(09:30) > RG(10:30) > RO > LB > GU > GO > GE > BA > JA(9) > PI > FO > SI(15)`
+
+#### 6.2.1 Regulares
+
+Na ordem de `fila_display`, ignorando especiais:
+
+- `XX(HH:MM)`: indisponível para uma manobra hipotética **com a mesma origem e o mesmo horário da linha atual**. HH:MM = `avail(p, From da linha)`. Por isso o HH:MM exibido muda conforme a origem da linha (margem 45 se a linha sai de FB, 25 nos demais casos, e L até essa origem).
+- `XX`: disponível, nunca manobrou, ou **acabou de fazer a B** (marcado em `_no_hhmm`: depois da B, o prático aparece sem HH:MM até fazer a próxima A, mesmo que ainda não esteja livre). Atenção: isso é só exibição. Na escolha, a disponibilidade é sempre verificada.
+
+#### 6.2.2 Especiais: `XX(N)`
+
+`N` = quantas manobras faltam até a próxima manobra **forçada** desse especial (1 = a próxima linha). O especial é inserido na posição `N − 1` da lista (contando regulares e especiais já inseridos), limitada ao fim. Regras exatas (só exibição):
+
+1. Os especiais são processados em ordem crescente de `next_slot`.
+2. Se o especial **acabou de manobrar nesta linha** e a próxima manobra forçada dele no turno está a menos de 12 linhas, ele é exibido como `XX(12)` no **fim**.
+3. Se existe próxima manobra forçada no turno: `N = posição absoluta dela − man_count` (exato, sem teto).
+4. Se não existe: `N = max(1, next_slot − man_count)`. Se `N > 14`, exibe `XX(12)` no fim.
+
+#### 6.2.3 Contadores de exibição dos especiais (`next_slot`)
+
+Usados só no item 4 acima e no `ns_carry`:
+
+- No início do turno: para cada especial presente em `Y`, `next_slot = man_count_prev + índice em Y` ou `man_count_prev + ns_carry`. Com forçamento, passa a ser a posição absoluta da 1ª manobra forçada dele no turno.
+- Depois de manobrar: `+12`.
+- Depois de cada grupo de mesmo minuto, ajuste ("catch-up"): se `next_slot < man_count`, soma 12 até alcançar `man_count`, depois subtrai 12 enquanto for maior que `man_count + 11` e, por fim, garante que não fique abaixo de `man_count` (com uma regra especial para a 2ª linha de pares).
+- Na virada D1→D2: chave remapeada por slot (`Y_d1[i] → Y_d2[i]`).
+
+**[Inferência]** Uma reimplementação pode simplificar a exibição dos especiais para "N = linhas até a próxima manobra forçada no turno; senão, 12 no fim", desde que se aceite a diferença em casos de borda de turno.
+
+### 6.3 Planilha final do painel (`ao_vivo/E2D_2026_v6.xlsx`, aba `E2D 2026`)
+
+Gerada por `gerar_2026.py` (bloco 6) a partir da saída do motor:
+
+- Linha 1: título `E2D 2026 — margem 45 min antes de entrada / 25 min antes de saída e mudança — gerado DD/MM/AAAA HH:MM`.
+- Linha 2: cabeçalho `Seq, Data, Hora, Termino, Pratico, Navio, De, Para, Pts(cont), Pts(real), Total, Status, #Pos, Escalacao`.
+- Linhas 3 em diante: só as linhas com `Seq` inteiro (as divisórias de dia são removidas). `Pts(cont)`, `Pts(real)`, `Total` e `#Pos` ficam **vazias** (só existem por compatibilidade com o `ep_atualizar.py`).
+
+### 6.4 Log de fallback
+
+`FB_OUT` (pickle): lista de tuplas `(Timestamp início, prático, datetime em que ficaria livre, navio, de, para)`.
+
+---
+
+## 7. Parâmetros configuráveis e valores atuais
+
+### 7.1 Parâmetros em vigor
+
+| Parâmetro | Valor | Onde | Observação |
+|---|---|---|---|
+| `MARGEM_ENTRADA` | 45 min | env, `motor_e2d.py` | Próxima manobra sai de FB |
+| `MARGEM_OUTRAS` | 25 min | env, `motor_e2d.py` | Saída e mudança |
+| `ESP_SET` | `JA,SI,CH` | env, motor e `nova_escalacao` | Em `gerar_2026.py` é fixo |
+| `Z5_LIMITE_DIA` | 1 | constante, `ep_sim_v3_corrigido.py` | |
+| `THRESHOLD` | 2.0 | constante, `ep_sim_v3_corrigido.py` | Com 1 ponto por manobra = ciclo de 2 |
+| Pontos por manobra | 1.0 | `pts_man_fn` (patch em `motor_e2d.py`) | `PTS_TABLE` também é zerada para 1,0 |
+| `CARRY` | False | `ep_sim_v3_corrigido.py` | |
+| Dia operacional | 07:30 | código | Fixo |
+| T padrão (berço sem T) | 60 min | `gT` | |
+| Tm padrão por par de zonas | `TM_ZONA`, padrão 60 | `ep_algoritmo.py` | |
+| Zona padrão (berço sem zona) | 2 | `BERCO_ZONE_DEFAULT` | |
+| Arredondamento | r15, ao mais próximo | `ep_algoritmo.r15` | |
+| Slots E12 (simulação dos especiais) | 12 | `gerar_2026.py` | |
+| Draga: manobras do navio em ±36 h | ≥ 4 (horários distintos) | `ep_sim_v3_corrigido.py`, bloco DRAGA | 5.13 |
+| Draga: tolerância após o fim previsto da 1ª | 30 min | idem | 5.13 |
+| T do giro sem atracar | linhas `GIRO …` da tabela T | `gerar_2026.py` → `BTP_OV` | 5.14 |
+| Escalação congelada a partir de | linha azul (começou) ou vermelha (terminou) | `gerar_2026.py` (grava), `FROZEN` (motor lê) | 5.16 |
+| Cancelada: prático só pega manobra a partir de | hora em que o cancelamento foi visto + 1 h | `ep_sim_v3_corrigido.py` (`_nao_antes`) | 5.17 |
+| Órfã: tolerância de duplicidade no histórico | ±6 h (mesmo navio, De e Para) | `gerar_2026.py`, bloco 1 | 5.16 |
+
+### 7.2 Parâmetros presentes no código, mas desligados ou sem efeito em produção
+
+| Item | Situação |
+|---|---|
+| `BTP_OV` (pickle `{(início 'AAAA-MM-DD HH:MM', fr, to): T}`) | Opcional, desligado. Substitui o T de manobras específicas. |
+| `TPLUS` (`"BERÇO:min;BERÇO2"`), `TPLUS_MIN` (padrão 15), `TPLUS_SO_SM` | Opcional, desligado. Soma minutos ao T de entradas e saídas naquele berço. Com `TPLUS_SO_SM=1`, não soma quando a próxima manobra sai de FB. |
+| `ATRASO` (`"PR|AAAA-MM-DD HH:MM|min;…"`), `ATRASO_MAN` (pickle) | Opcional, desligado. Soma minutos à disponibilidade. |
+| `PEND_OFF=1` | Desliga a regra de B pendente na virada. Não usar. |
+| `DISP_PROX=1` | Exibição avaliada pela próxima manobra. Não usar. |
+| `VIRADA_DUMP` | Grava em arquivo a escalação de cada virada. Diagnóstico. |
+| `SEM_FORCA=1` | Ignora o mapa de especiais e volta ao rodízio interno. Não usar. |
+| `REORD=direto/slot` | Modos alternativos de nova escalação (troca direta, 5.6; ou sem reordenar). Não usar. |
+| `BUFFER = 15` (`ep_sim_v3_corrigido`) | Só usado pela `avail_time_fn` original, que é **substituída** por `_avail_b45`. Sem efeito. |
+| `ep_algoritmo.BUFFER = 30`, `THRESHOLD = 3.0`, `PTS_TABLE`, `simular_ep`, `BASE_DT`, `CICLO_H`, `grp_turno` | Legado da EP por pontos. Não usado pelo motor E2D. |
+| `ATALAIA = 12` | Definido, **não usado** em lugar nenhum. |
+| `GRUPO_A_DATA` | Dicionário vazio. Em todos os casos usa-se `turno['Y']`. |
+| `real_cycle_ref`, `tctr` | Contadores sem efeito na escolha. |
+
+### 7.3 Fila após a B
+
+- `inserir_apos_B` é FIFO puro: depois da B o prático vai para o fim da fila.
+- Não há nenhum outro critério de ordenação após a B.
+
+---
+
+## 8. Tabelas completas
+
+### 8.1 `BERCO_ZONE` (berço → zona)
+
+| Zona | Berços |
+|---|---|
+| 1 | `FB` |
+| 2 | `29`, `29/30`, `29A`, `30`, `31`, `31/32`, `32`, `32/33`, `33`, `34`, `35.1`, `35.2`, `37.1`, `38`, `39`, `CTRLE`, `DOW`, `SAIPEM 1`, `SAIPEM 1/2`, `SAIPEM 2`, `SAIPEM 3`, `TC 1.1`, `TC 1.2`, `TC 2`, `TC 3`, `TEAG`, `TEG`, `TERMG`, `TEV`, `TGG` |
+| 3 | `12-A`, `12-P`, `13/14`, `16/17`, `19`, `20/21`, `23`, `25`, `AGEO`, `CORTE`, `CS 1`, `CS 2`, `CS 3`, `CS 4`, `EMB-1`, `EMB-2`, `EMB-3`, `EMB-4`, `EMBR.`, `IB BC`, `IB SP`, `IB-OE`, `OUT 2/3`, `OUT-1`, `OUT-2`, `OUT-3`, `VAL` |
+| 4 | `AL 1`, `AL 2`, `AL 3`, `AL 4`, `BTP-1`, `BTP-2`, `BTP-3`, `TRSP` |
+| 5 | `COS 2`, `COS 3`, `COS 4`, `TIP-2`, `TIP-3`, `TIP-4`, `ULT` |
+| padrão | qualquer outro código → **2** |
+
+A comparação é exata (sensível a maiúsculas, espaços internos, ponto e hífen), após `strip`.
+
+Berços que aparecem na pauta de 2026 e **não estão cadastrados** (caem na Z2 e, em entrada ou saída, em T = 60): `37.2` (10 manobras), `ALA` (4), `CS 1/2` (2), `EMB-1/2` (17), `LARGO` (2), `MORT` (4), `TC` (8). **[Ponto de atenção]**
+
+### 8.2 `ZONE_MATRIX` (lancha, minutos, simétrica)
+
+| | Z1 | Z2 | Z3 | Z4 | Z5 |
+|---|---|---|---|---|---|
+| **Z1** | 0 | 20 | 25 | 30 | 40 |
+| **Z2** | 20 | 0 | 5 | 10 | 20 |
+| **Z3** | 25 | 5 | 0 | 5 | 15 |
+| **Z4** | 30 | 10 | 5 | 0 | 10 |
+| **Z5** | 40 | 20 | 15 | 10 | 0 |
+
+Par ausente → 0 (não ocorre, pois a matriz está completa).
+
+### 8.3 `TM_ZONA` (P60 das mudanças reais por par de zonas, minutos, simétrica; desde 06/11/2026)
+
+Usado só para **par novo** sem vizinho nem inverso na tabela (5.19). Z3 dividida: **Z3 sul** = 12-A a 20/21, 23, 25, Outeirinhos; **Z3 norte** = Saboó (VAL, CORTE, CS), Ilha (IB, AGEO) e Embraport (`Z3_NORTE`, função `zona_mud`). A divisão vale só para o T de mudança; lancha e demais regras usam a `zona()` normal.
+
+| Par de zonas | Mudanças | Tm (P60) |
+|---|---|---|
+| Z2↔Z2 | 169 | 60 |
+| Z2↔Z3 sul | 47 | 60 |
+| Z2↔Z3 norte | 179 | 75 |
+| Z2↔Z4 | 35 | 105 |
+| Z2↔Z5 | 11 | 120 |
+| Z3 sul↔Z3 sul | 26 | 60 |
+| Z3 sul↔Z3 norte | 6 | 80 |
+| Z3 sul↔Z4 | 5 | 95 |
+| Z3 sul↔Z5 | 23 | 120 |
+| Z3 norte↔Z3 norte | 28 | 60 |
+| Z3 norte↔Z4 | 124 | 65 |
+| Z3 norte↔Z5 | 7 | 90 |
+| Z4↔Z4 | 4 | 80 (todas as combinações já estão na tabela pela regra provisória 5.19) |
+| Z5↔Z5 | 53 | 60 |
+| demais (Z4↔Z5 não ocorre) | — | 60 (`TM_ZONA_DEFAULT`) |
+
+Antes de 06/11/2026: mediana das 437 mudanças de 2025, sem dividir a Z3 (Z2↔Z2 60, Z2↔Z3 65, Z3↔Z3 60, Z3↔Z4 60, Z2↔Z4 90, Z3↔Z5 105, Z2↔Z5 130, Z4↔Z4 80, Z5↔Z5 60).
+
+### 8.4 `ATALAIA`
+
+`ATALAIA = 12` minutos (Atalaia ↔ FB). **Não é usado** em nenhum cálculo do motor nem do orquestrador.
+
+### 8.5 Tabela T de entrada e saída e tabela de mudanças
+
+Ver Apêndice A (valores atuais do arquivo `Tempo_T__2025_.xlsx`).
+
+---
+
+## 9. Casos de borda e pontos de atenção
+
+| # | Ponto | Onde | Impacto / recomendação |
+|---|---|---|---|
+| P1 | **r15 arredonda ao mais próximo**, não para cima. A docstring está errada. | `ep_algoritmo.r15` | Reproduzir exatamente. Até 7 min de "folga negativa". |
+| P2 | Após a **A o prático não muda de posição**. A ordem da frente da fila é a ordem em que os práticos fizeram a A, não o HH:MM. `inserir_apos_A` nunca é chamada. O cabeçalho do arquivo ("HH:MM ord. por horário") não corresponde ao comportamento. | `atualizar_nao_esp`, `ep_next` | Implementar como posição fixa, não como seção ordenada. |
+| P3 | Se o mapa de especiais estiver **vazio**, o motor muda de modo: passa a escalar especiais por contador interno (pré-atribuição e `esp_due`). | `simular_turno` | Em produção, garantir sempre o forçamento. A reimplementação pode tratar "mapa vazio" como "sem especiais". |
+| P4 | **Possível erro de execução**: `atualizar_esp` lê `next_slot[prat]` mesmo com `_rr_orig.pop` (o argumento padrão é avaliado antes). Um especial forçado num turno em que **não consta do `dia1`** (só no D2, ou fora da escala) gera `KeyError` e o motor para. Não aconteceu em 2026 até 20/10 (nenhum turno com especial só no D2), mas o caso é possível com trocas de especiais. | `atualizar_esp`, `_esc_d1` | Na reimplementação, desacoplar a exibição dos especiais da escolha. |
+| P5 | Na virada D1→D2, os contadores de exibição dos especiais são remapeados **por índice de slot**. Se um especial mudar de slot entre D1 e D2, o contador passa a outra sigla e o especial pode sumir da exibição (e cair no P4). | `simular_turno`, D1→D2 | Só exibição, mais o risco do P4. |
+| P6 | **Seq da saída ≠ índice da pauta.** O motor reagrupa as linhas do mesmo navio no mesmo minuto. Já o `ESP_FONTE` usa o índice da pauta (`Seq − 1`) e confere o navio com `assert`. | `motor_e2d.py`, `simular_turno` | A integração deve usar a chave (Data, Hora, Navio), não o Seq. |
+| P7 | A cópia criada para o navio de 2 práticos com uma só linha fica **por último no minuto**, não colada na original. Na simulação E12 dos especiais (que exige linhas adjacentes), o par vira 2 manobras "solo". Com prático real conhecido, as duas linhas recebem o **1º** nome da lista. Em 2026: 2 casos (AGILITY DIVA 27/01 07:30; GEORGE H 01/02 09:00). | `_completar_dois_praticos`, bloco 4 | Duplicar a linha logo após a original. |
+| P8 | **Z5 tem prioridade sobre a disponibilidade**: se os disponíveis já fizeram Z5, é escolhido um indisponível sem Z5 (com registro de fallback). | `ESCOLHER` | Confirmar com a operação se é a regra desejada. |
+| P9 | **Fallback não simula atraso**: o prático "atrasado" fica com a manobra no horário da pauta e a próxima disponibilidade dele é calculada a partir desse horário. | `ESCOLHER`, `atualizar_nao_esp` | Reproduzir e registrar. |
+| P10 | O **HH:MM exibido depende da origem da linha atual** (margem 45/25 e L), então o mesmo prático pode aparecer com horários diferentes em linhas seguidas. Depois da B, o prático aparece **sem** HH:MM mesmo indisponível. | `make_esc` | Documentar para os usuários do painel. |
+| P11 | **T truncado** pelo `int()` no motor (83,5 → 83 etc.), mas usado sem truncar (float) na simulação E12 dos especiais. | `carregar_dados`, `gerar_2026` bloco 4 | Reproduzir a truncagem no motor. |
+| P12 | **Berços não cadastrados** caem na Z2 com T = 60 (lista em 8.1). `EMB-1/2` e `CS 1/2` são, fisicamente, Z3 **[Inferência]**. | `BERCO_ZONE`, `gT` | Cadastrar os berços, ou manter o padrão para fidelidade ao motor atual. |
+| P13 | A data da escala é a **posição da linha** na aba RESUMO (`01/01/2026 + i`). As colunas MÊS e DIA são ignoradas. Uma linha inserida ou removida desloca o ano inteiro. | `gerar_2026` bloco 3 | Validar a integridade (365 linhas contíguas). |
+| P14 | `corrigir` usa **permutações** (custo fatorial) e, num dia em andamento, quem ainda não manobrou conta como "não manobrou". Pode atribuir slots de forma provisória, que mudam ao longo do dia. **[Inferência]** | `corrigir` | Aceitável com poucos `ins`. Em produção, limitar ou otimizar. |
+| P15 | Na simulação E12, o ponteiro (`ptr`) só é reposicionado em **D1 com prático real**. Em dias futuros (sem dado real), o ponteiro e o `buf` do dia anterior continuam valendo para a nova lista P. **[Inferência]** Pode não refletir a abertura real da E12. | `gerar_2026` bloco 4 | Conferir com a regra da E12. |
+| P16 | Na simulação E12, as 2 linhas de um navio de 2 práticos precisam ser da **mesma classe** (2 especiais ou 2 regulares). | `gerar_2026` bloco 4 | Confirmar com a regra da E12. |
+| P17 | Quando D1 e D2 têm **o mesmo conjunto** de pessoas (mesmo em slots diferentes), a fila não é refeita. Entre turnos com o mesmo conjunto, a fila volta para a **ordem dos slots** do D1 (perde a ordem anterior). | `motor_e2d.py`, D1→D2 | Raro, mas reproduzir. |
+| P18 | A virada D1→D2 e a virada de dia operacional ocorrem **na primeira manobra** após 07:30, não às 07:30 em si. Sem manobras, nada muda. | `simular_turno` | Equivalente na prática. |
+| P19 | `nova_escalacao` corta em **12** regulares e trunca `saindo`/`entrando` ao menor tamanho. | `nova_escalacao` | Sem efeito com 12 slots. |
+| P20 | Sem `Termino` no CSV atual, a coluna Termino da saída fica vazia e a simulação E12 usa `início + T` como fim. | `gerar_2026` | Informativo. |
+| P21 | Sem histórico, o ramo da pauta de reserva (`Pauta_de_Manobra_2026.xlsx`) exige a coluna `Termino` (senão dá `KeyError` na linha 93). | `gerar_2026` bloco 1 | Ramo de reserva. |
+| P22 | `carregar_dados()` exige o arquivo `Manobras_2025__original_.xlsx`, embora o motor descarte o conteúdo. | `ep_algoritmo.carregar_dados` | Na reimplementação, ler só a tabela T. |
+| P23 | Sem `ESP_FONTE`, o motor importa `engine_e12`, que **não está no pacote**. | `motor_e2d.py` | `ESP_FONTE` é obrigatório. |
+| P24 | Comentários desatualizados: "15 min nas demais" (o valor é 25); a nota da aba T fala em "1.1×T + L + 0.5h" (não é usada). | `motor_e2d.py` l.43; xlsx | Ignorar. Vale o código. |
+| P25 | Um turno sem manobras devolve `ultima_esc` vazio. O turno seguinte começa então pela ordem dos slots do D1 (não aplica `nova_escalacao`). | `simular_turno`, laço de turnos | Reproduzir. |
+| P26 | Manobra cujo **mesmo navio aparece 2 vezes no mesmo minuto** é sempre tratada como 2 práticos. A chave de forçamento não usa De/Para. | `carregar_pauta`, forçamento | Garantir que a pauta não tenha duplicatas espúrias. |
+| P27 | Quando o fallback não acha nenhum regular livre de atribuição no minuto, usa `fila_display[0]`, que pode ser especial ou alguém já atribuído. Extremamente improvável. | `ESCOLHER` | Tratar como erro na reimplementação. |
+| P28 | O motor é recalculado do zero a cada execução. Mudanças no passado (escala corrigida, pauta) propagam para frente. **[Inferência]** Desde 29/10/2026 a manobra que começou ou terminou (linha azul/vermelha) fica fixa (5.16); o restante continua sendo recalculado. | arquitetura | Em produção, gravar a escalação no momento em que ela acontece. |
+
+Validações feitas na execução de 01/01 a 20/10/2026 (cópia isolada, sem alterar arquivos): 11.249 manobras; status A 5.417, B 5.409, especiais 423; nenhum regular com 2 manobras de mesmo status em sequência (alternância A/B perfeita); nenhum regular com mais de 1 Z5 por dia operacional; 6 fallbacks.
+
+---
+
+## 10. Referência cruzada: regra → arquivo/função
+
+| Regra | Arquivo | Função / trecho |
+|---|---|---|
+| Fórmula de disponibilidade (margem 45/25, T, L, r15) | `motor_e2d/motor_e2d.py` | `_avail_b45` (l.51-63), substitui `sim.avail_time_fn` |
+| Opcionais BTP_OV / TPLUS | `motor_e2d/motor_e2d.py` | l.49-50, 56-59 |
+| Opcionais ATRASO / ATRASO_MAN | `motor_e2d/ep_sim_v3_corrigido.py` | l.36-39, `avail` |
+| Disponível = nunca manobrou ou avail ≤ início | `ep_sim_v3_corrigido.py` | `is_avail` |
+| T por tipo de manobra | `motor_e2d/ep_algoritmo.py` | `gT`, `tm_zona`, `TM_ZONA` |
+| Lancha L | `ep_algoritmo.py` | `gL`, `ZONE_MATRIX`, `zona`, `BERCO_ZONE` |
+| r15 | `ep_algoritmo.py` | `r15` |
+| Leitura da tabela T (int) | `ep_algoritmo.py` | `carregar_dados` |
+| Leitura da pauta e pares2 | `motor_e2d/carregar_pauta.py` | `carregar_pauta` |
+| 1 ponto por manobra; ciclo de 2 | `motor_e2d.py` l.36-41; `ep_sim_v3_corrigido.py` | `pts_man_fn`, `THRESHOLD`, `atualizar_nao_esp` |
+| A não move; B vai ao fim | `ep_sim_v3_corrigido.py` | `atualizar_nao_esp`, `inserir_apos_B` |
+| Escolha: 1º disponível da fila | `ep_sim_v3_corrigido.py` | laço "PROCESSAR MANOBRAS" (l.543-611) |
+| Restrição Z5 | `ep_sim_v3_corrigido.py` | `Z5_LIMITE_DIA`, `is_z5`, `_filtra_z5`, `z5_count` |
+| Fallback "ninguém disponível" | `ep_sim_v3_corrigido.py` | `_mais_cedo`, `_FALLBACK_LOG`; gravação em `motor_e2d.py` l.429-430 |
+| Grupo do mesmo minuto e ordem dos navios | `ep_sim_v3_corrigido.py` | l.433-451 |
+| Especiais forçados | `motor_e2d.py` l.199-236; `ep_sim_v3_corrigido.py` l.551-566 | `_ESP_ATRIB_FORCADAS_KEY` |
+| Pré-atribuição e rodízio de especiais (desativados) | `ep_sim_v3_corrigido.py` | l.465-540, 593-597 |
+| Exibição dos especiais | `ep_sim_v3_corrigido.py` | `make_esc`, `atualizar_esp`, catch-up (l.670-683) |
+| Virada de dia operacional e B pendente | `ep_sim_v3_corrigido.py` | `_calc_dia_op`, `_aplicar_pendentes` |
+| Virada D1→D2 | `ep_sim_v3_corrigido.py` | l.404-426 |
+| Virada entre turnos e B pendente entre turnos | `motor_e2d.py` | l.280-314 |
+| Nova escalação | `motor_e2d/nova_escalacao.py` | `nova_escalacao`, `status_valido`, `parse_esc`, `fmt_esc` |
+| Grupo A (vazio) | `motor_e2d/grupo_a_data.py` | `GRUPO_A_DATA = {}` |
+| Saída do motor e divisórias | `motor_e2d.py` | l.345-427 (`logical_day`, `cols`) |
+| Montagem da pauta ao vivo | `gerar_2026.py` | `_ler_csv`, `_completar_dois_praticos`, bloco 1 |
+| Prático real e ordem do dia | `gerar_2026.py` | bloco 2 (`real`, `seq_dia`, `J`) |
+| Escala do dia e correção | `gerar_2026.py` | bloco 3 (`plano`, `corrigir`, `_custo`) |
+| Montagem dos turnos | `gerar_2026.py` | bloco 3 (`turnos`, rotação do 1º turno) |
+| Simulação E12 dos especiais | `gerar_2026.py` | bloco 4 (`fim_de`, laço por `dop`) |
+| Chamada do motor e planilha final | `gerar_2026.py` | blocos 5 e 6 |
+| Draga (mesmo prático em manobras em sequência) | `ep_sim_v3_corrigido.py` | bloco DRAGA (`_draga_par`, `_draga_reserva`), `is_avail`, prefixo da escolha |
+| Giro sem atracar | `gerar_2026.py`; `ep_atualizar.py` | bloco "Giro sem atracar" (`_GIRO_T`); `_gT_m` (painel) |
+| Escalação congelada | `gerar_2026.py`; `motor_e2d.py`; `ep_sim_v3_corrigido.py` | gravação (`CONG`, `escalacao_finalizada.csv`, `STATUS_FIXO`) e `_congeladas.pkl`; `sim._FROZEN_KEY`; bloco `_fz` no laço "PROCESSAR MANOBRAS" |
+| Manobra cancelada depois da escalação | `gerar_2026.py`; `motor_e2d.py`; `ep_sim_v3_corrigido.py`; `E2D_pauta_automatica.user.js` | `manobras_canceladas.csv`, `_canceladas.pkl`; `sim._CANCEL_KEY`; `_nao_antes`, bloco "MANOBRA CANCELADA" antes de "# Processar manobra" |
+| Manobras já iniciadas fora do histórico (órfãs) | `gerar_2026.py` | bloco 1 (`_orf`) |
+| Escala real (imagem do SPPILOTS) | `escala_grafica.py`; `gerar_2026.py` | `atualizar`; bloco `_EG` |
+
+---
+
+## Apêndice A. Tabela de tempos (`motor_e2d/inputs/Tempo_T__2025_.xlsx`)
+
+Valores atuais do arquivo. "T usado" = valor após o `int()` do motor.
+
+### A.1 Aba `T Entrada ou saída` (T de entrada e de saída por berço)
+
+| Berço | Zona | T no arquivo (min) | T usado (min) |
+|---|---|---|---|
+| `12-A` | 3 | 80 | 80 |
+| `12-P` | 3 | 83.5 | 83 |
+| `13/14` | 3 | 75 | 75 |
+| `16/17` | 3 | 85 | 85 |
+| `19` | 3 | 75 | 75 |
+| `20/21` | 3 | 75 | 75 |
+| `23` | 3 | 65 | 65 |
+| `25` | 3 | 60 | 60 |
+| `29` | 2 | 60 | 60 |
+| `29/30` | 2 | 60 | 60 |
+| `29A` | 2 | 70 | 70 |
+| `30` | 2 | 60 | 60 |
+| `31` | 2 | 60 | 60 |
+| `31/32` | 2 | 60 | 60 |
+| `32` | 2 | 60 | 60 |
+| `32/33` | 2 | 60 | 60 |
+| `33` | 2 | 60 | 60 |
+| `34` | 2 | 60 | 60 |
+| `35.1` | 2 | 60 | 60 |
+| `35.2` | 2 | 60 | 60 |
+| `37.1` | 2 | 60 | 60 |
+| `38` | 2 | 60 | 60 |
+| `39` | 2 | 60 | 60 |
+| `AGEO` | 3 | 90 | 90 |
+| `AL 1` | 4 | 109 | 109 |
+| `AL 2` | 4 | 105 | 105 |
+| `AL 3` | 4 | 95 | 95 |
+| `AL 4` | 4 | 100 | 100 |
+| `BTP-1` | 4 | 105 | 105 |
+| `BTP-2` | 4 | 105 | 105 |
+| `BTP-3` | 4 | 100 | 100 |
+| `CORTE` | 3 | 75 | 75 |
+| `COS 2` | 5 | 130 | 130 |
+| `COS 3` | 5 | 120 | 120 |
+| `COS 4` | 5 | 120 | 120 |
+| `CS 1` | 3 | 85 | 85 |
+| `CS 2` | 3 | 85 | 85 |
+| `CS 3` | 3 | 90 | 90 |
+| `CS 4` | 3 | 75 | 75 |
+| `CTRLE` | 2 | 60 | 60 |
+| `DOW` | 2 | 60 | 60 |
+| `EMB-1` | 3 | 90 | 90 |
+| `EMB-2` | 3 | 85 | 85 |
+| `EMB-3` | 3 | 80 | 80 |
+| `EMB-4` | 3 | 90 | 90 |
+| `EMBR.` | 3 | 60 | 60 |
+| `IB BC` | 3 | 75 | 75 |
+| `IB SP` | 3 | 76.5 | 76 |
+| `IB-OE` | 3 | 85 | 85 |
+| `OUT 2/3` | 3 | 60 | 60 |
+| `OUT-1` | 3 | 60 | 60 |
+| `OUT-2` | 3 | 80 | 80 |
+| `OUT-3` | 3 | 70 | 70 |
+| `SAIPEM 1` | 2 | 45 | 45 |
+| `SAIPEM 1/2` | 2 | 45 | 45 |
+| `SAIPEM 2` | 2 | 45 | 45 |
+| `SAIPEM 3` | 2 | 50 | 50 |
+| `TC 1.1` | 2 | 60 | 60 |
+| `TC 1.2` | 2 | 60 | 60 |
+| `TC 2` | 2 | 65 | 65 |
+| `TC 3` | 2 | 65 | 65 |
+| `TEAG` | 2 | 60 | 60 |
+| `TEG` | 2 | 60 | 60 |
+| `TERMG` | 2 | 60 | 60 |
+| `TEV` | 2 | 60 | 60 |
+| `TGG` | 2 | 60 | 60 |
+| `TIP-2` | 5 | 127.5 | 127 |
+| `TIP-3` | 5 | 120 | 120 |
+| `TIP-4` | 5 | 125 | 125 |
+| `TRSP` | 4 | 157.5 | 157 |
+| `ULT` | 5 | 125 | 125 |
+| `VAL` | 3 | 85 | 85 |
+
+Berço ausente desta tabela (inclusive os não cadastrados em `BERCO_ZONE`) → T = 60.
+
+### A.2 Aba `Mudanças de entre berços` (Tm por par direcional De → Para; 314 pares; método em 5.19)
+
+| De | Para | Tm (min) |
+|---|---|---|
+| `12-A` | `13/14` | 60 |
+| `12-A` | `16/17` | 60 |
+| `12-A` | `34` | 60 |
+| `12-A` | `37.1` | 75 |
+| `12-A` | `39` | 75 |
+| `12-A` | `EMB-3` | 80 |
+| `12-P` | `30` | 60 |
+| `13/14` | `12-A` | 70 |
+| `13/14` | `13/14` | 70 |
+| `13/14` | `16/17` | 60 |
+| `13/14` | `23` | 60 |
+| `13/14` | `30` | 60 |
+| `13/14` | `37.1` | 75 |
+| `16/17` | `12-A` | 75 |
+| `16/17` | `20/21` | 60 |
+| `16/17` | `29` | 60 |
+| `16/17` | `31` | 60 |
+| `16/17` | `35.2` | 75 |
+| `16/17` | `AL 3` | 95 |
+| `16/17` | `TIP-2` | 120 |
+| `16/17` | `TIP-3` | 120 |
+| `19` | `16/17` | 60 |
+| `19` | `19` | 60 |
+| `19` | `23` | 60 |
+| `19` | `35.2` | 75 |
+| `20/21` | `29` | 60 |
+| `20/21` | `30` | 60 |
+| `20/21` | `32` | 60 |
+| `20/21` | `33` | 60 |
+| `20/21` | `35.1` | 75 |
+| `20/21` | `35.2` | 75 |
+| `20/21` | `39` | 75 |
+| `23` | `31` | 60 |
+| `23` | `CS 2` | 80 |
+| `23` | `TERMG` | 60 |
+| `23` | `TIP-4` | 120 |
+| `25` | `20/21` | 60 |
+| `25` | `30` | 60 |
+| `25` | `TC 1.1` | 60 |
+| `29` | `30` | 55 |
+| `29` | `31` | 60 |
+| `29` | `33` | 55 |
+| `29` | `BTP-3` | 105 |
+| `29` | `COS 2` | 120 |
+| `29` | `EMBR.` | 70 |
+| `29/30` | `12-A` | 60 |
+| `30` | `13/14` | 60 |
+| `30` | `25` | 60 |
+| `30` | `29` | 55 |
+| `30` | `29/30` | 55 |
+| `30` | `30` | 55 |
+| `31` | `16/17` | 60 |
+| `31` | `31` | 60 |
+| `31` | `32` | 45 |
+| `31` | `35.1` | 55 |
+| `31` | `BTP-3` | 105 |
+| `31` | `CS 1` | 75 |
+| `31` | `CS 2` | 70 |
+| `31` | `EMB-1` | 70 |
+| `31` | `EMB-3` | 75 |
+| `31` | `ULT` | 120 |
+| `32` | `16/17` | 60 |
+| `32` | `31` | 60 |
+| `32` | `33` | 55 |
+| `32` | `35.1` | 55 |
+| `32` | `CS 2` | 70 |
+| `32` | `CS 3` | 75 |
+| `32` | `EMB-3` | 75 |
+| `32` | `EMB-4` | 65 |
+| `33` | `25` | 60 |
+| `33` | `33` | 55 |
+| `33` | `CS 2` | 70 |
+| `33` | `EMB-4` | 60 |
+| `34` | `31` | 60 |
+| `34` | `32` | 45 |
+| `34` | `33` | 55 |
+| `34` | `35.1` | 50 |
+| `34` | `35.2` | 60 |
+| `34` | `CS 4` | 75 |
+| `34` | `EMB-1/2` | 60 |
+| `34` | `EMB-3` | 75 |
+| `34` | `EMB-4` | 60 |
+| `35.1` | `29` | 45 |
+| `35.1` | `33` | 45 |
+| `35.1` | `34` | 60 |
+| `35.1` | `35.1` | 70 |
+| `35.1` | `CORTE` | 75 |
+| `35.1` | `EMB-3` | 80 |
+| `35.1` | `VAL` | 75 |
+| `35.2` | `33` | 55 |
+| `35.2` | `34` | 60 |
+| `35.2` | `35.1` | 60 |
+| `35.2` | `35.2` | 65 |
+| `35.2` | `CS 4` | 75 |
+| `35.2` | `EMB-3` | 85 |
+| `37.1` | `23` | 80 |
+| `37.1` | `29` | 55 |
+| `37.1` | `35.1` | 60 |
+| `37.1` | `OUT-3` | 80 |
+| `37.1` | `TEG` | 60 |
+| `38` | `35.2` | 65 |
+| `38` | `38` | 65 |
+| `38` | `OUT-3` | 80 |
+| `39` | `23` | 80 |
+| `AGEO` | `AL 4` | 60 |
+| `AGEO` | `DOW` | 75 |
+| `AL 1` | `AL 1` | 90 |
+| `AL 1` | `AL 2` | 90 |
+| `AL 1` | `AL 3` | 75 |
+| `AL 1` | `AL 4` | 75 |
+| `AL 1` | `OUT-1` | 95 |
+| `AL 2` | `AL 1` | 90 |
+| `AL 2` | `AL 2` | 90 |
+| `AL 2` | `AL 3` | 75 |
+| `AL 2` | `AL 4` | 75 |
+| `AL 2` | `DOW` | 90 |
+| `AL 2` | `IB SP` | 60 |
+| `AL 2` | `IB-OE` | 70 |
+| `AL 3` | `AGEO` | 60 |
+| `AL 3` | `AL 1` | 90 |
+| `AL 3` | `AL 2` | 90 |
+| `AL 3` | `AL 3` | 75 |
+| `AL 3` | `AL 4` | 75 |
+| `AL 3` | `DOW` | 90 |
+| `AL 3` | `IB BC` | 60 |
+| `AL 3` | `IB SP` | 60 |
+| `AL 3` | `IB-OE` | 70 |
+| `AL 4` | `AGEO` | 60 |
+| `AL 4` | `AL 1` | 90 |
+| `AL 4` | `AL 2` | 90 |
+| `AL 4` | `AL 3` | 75 |
+| `AL 4` | `AL 4` | 75 |
+| `AL 4` | `CS 2` | 65 |
+| `AL 4` | `DOW` | 90 |
+| `AL 4` | `IB BC` | 75 |
+| `AL 4` | `IB SP` | 60 |
+| `AL 4` | `IB-OE` | 60 |
+| `BTP-1` | `BTP-1` | 80 |
+| `BTP-1` | `BTP-2` | 80 |
+| `BTP-1` | `BTP-3` | 80 |
+| `BTP-1` | `EMB-1` | 70 |
+| `BTP-1` | `EMB-2` | 70 |
+| `BTP-1` | `TC 3` | 105 |
+| `BTP-2` | `BTP-1` | 80 |
+| `BTP-2` | `BTP-2` | 80 |
+| `BTP-2` | `BTP-3` | 80 |
+| `BTP-2` | `EMB-1` | 75 |
+| `BTP-2` | `EMB-2` | 70 |
+| `BTP-2` | `TC 1.2` | 105 |
+| `BTP-3` | `25` | 95 |
+| `BTP-3` | `BTP-1` | 80 |
+| `BTP-3` | `BTP-2` | 80 |
+| `BTP-3` | `BTP-3` | 80 |
+| `BTP-3` | `EMB-1` | 75 |
+| `BTP-3` | `EMB-2` | 70 |
+| `BTP-3` | `EMB-3` | 70 |
+| `CORTE` | `CORTE` | 60 |
+| `CORTE` | `TEV` | 70 |
+| `COS 2` | `25` | 105 |
+| `COS 2` | `COS 2` | 60 |
+| `COS 2` | `COS 3` | 60 |
+| `COS 2` | `COS 4` | 60 |
+| `COS 3` | `COS 2` | 60 |
+| `COS 3` | `CS 2` | 90 |
+| `COS 3` | `CS 4` | 90 |
+| `COS 4` | `COS 2` | 60 |
+| `CS 1` | `29` | 75 |
+| `CS 1` | `CS 1` | 60 |
+| `CS 1` | `TC 2` | 70 |
+| `CS 2` | `25` | 80 |
+| `CS 2` | `CS 2` | 60 |
+| `CS 2` | `EMB-4` | 60 |
+| `CS 3` | `16/17` | 80 |
+| `CS 3` | `32` | 75 |
+| `CS 3` | `CS 3` | 60 |
+| `CS 3` | `TC 1.2` | 70 |
+| `CS 3` | `VAL` | 60 |
+| `CS 4` | `34` | 75 |
+| `CS 4` | `CS 1` | 60 |
+| `CS 4` | `CS 2` | 60 |
+| `CS 4` | `EMB-3` | 60 |
+| `CS 4` | `EMB-4` | 60 |
+| `CTRLE` | `23` | 60 |
+| `DOW` | `25` | 60 |
+| `DOW` | `29` | 55 |
+| `DOW` | `29A` | 55 |
+| `DOW` | `31` | 55 |
+| `DOW` | `35.1` | 60 |
+| `DOW` | `35.2` | 60 |
+| `DOW` | `AL 3` | 105 |
+| `DOW` | `AL 4` | 105 |
+| `DOW` | `CS 2` | 75 |
+| `DOW` | `IB BC` | 75 |
+| `DOW` | `IB SP` | 75 |
+| `DOW` | `IB-OE` | 75 |
+| `EMB-1` | `25` | 80 |
+| `EMB-1` | `31` | 60 |
+| `EMB-1` | `BTP-1` | 60 |
+| `EMB-1` | `BTP-2` | 60 |
+| `EMB-1` | `BTP-3` | 60 |
+| `EMB-1` | `EMB-1` | 60 |
+| `EMB-1` | `TC 1.2` | 60 |
+| `EMB-2` | `31/32` | 60 |
+| `EMB-2` | `BTP-1` | 70 |
+| `EMB-2` | `BTP-2` | 70 |
+| `EMB-2` | `BTP-3` | 60 |
+| `EMB-2` | `EMB-2` | 60 |
+| `EMB-2` | `EMB-3` | 75 |
+| `EMB-2` | `TC 1.2` | 60 |
+| `EMB-2` | `TC 2` | 65 |
+| `EMB-2` | `TEV` | 65 |
+| `EMB-2` | `VAL` | 60 |
+| `EMB-3` | `32` | 60 |
+| `EMB-3` | `34` | 60 |
+| `EMB-3` | `35.2` | 75 |
+| `EMB-3` | `CORTE` | 60 |
+| `EMB-3` | `EMB-3` | 75 |
+| `EMB-3` | `TC 1.1` | 65 |
+| `EMB-3` | `TC 2` | 65 |
+| `EMB-4` | `32` | 60 |
+| `EMB-4` | `35.2` | 75 |
+| `EMB-4` | `TC 3` | 65 |
+| `EMBR.` | `29` | 60 |
+| `EMBR.` | `32` | 60 |
+| `FB` | `FB` | 80 |
+| `IB BC` | `AL 2` | 60 |
+| `IB BC` | `AL 3` | 60 |
+| `IB BC` | `AL 4` | 60 |
+| `IB BC` | `DOW` | 75 |
+| `IB SP` | `AL 3` | 60 |
+| `IB SP` | `AL 4` | 60 |
+| `IB SP` | `DOW` | 75 |
+| `IB-OE` | `AGEO` | 60 |
+| `IB-OE` | `AL 2` | 60 |
+| `IB-OE` | `AL 3` | 60 |
+| `IB-OE` | `AL 4` | 60 |
+| `IB-OE` | `CS 1` | 60 |
+| `IB-OE` | `DOW` | 75 |
+| `OUT 2/3` | `35.2` | 60 |
+| `OUT-1` | `25` | 60 |
+| `OUT-1` | `AL 1` | 95 |
+| `OUT-2` | `OUT-2` | 60 |
+| `SAIPEM 1` | `SAIPEM 1` | 45 |
+| `SAIPEM 1` | `SAIPEM 3` | 35 |
+| `SAIPEM 2` | `SAIPEM 1` | 45 |
+| `SAIPEM 2` | `SAIPEM 2` | 50 |
+| `SAIPEM 2` | `SAIPEM 3` | 35 |
+| `SAIPEM 3` | `SAIPEM 1` | 45 |
+| `SAIPEM 3` | `SAIPEM 2` | 45 |
+| `SAIPEM 3` | `SAIPEM 3` | 45 |
+| `TC 1.1` | `25` | 60 |
+| `TC 1.1` | `EMB-1` | 60 |
+| `TC 1.1` | `EMB-2` | 60 |
+| `TC 1.1` | `TC 1.1` | 60 |
+| `TC 1.2` | `29` | 60 |
+| `TC 1.2` | `33` | 60 |
+| `TC 1.2` | `BTP-1` | 85 |
+| `TC 1.2` | `EMB-3` | 60 |
+| `TC 1.2` | `TC 1.2` | 45 |
+| `TC 1.2` | `TC 2` | 60 |
+| `TC 1.2` | `TC 3` | 60 |
+| `TC 1.2` | `TEV` | 60 |
+| `TC 2` | `BTP-1` | 90 |
+| `TC 2` | `BTP-2` | 90 |
+| `TC 2` | `EMB-2` | 60 |
+| `TC 2` | `EMB-3` | 60 |
+| `TC 2` | `TC 1.1` | 60 |
+| `TC 2` | `TC 2` | 60 |
+| `TC 2` | `TC 3` | 60 |
+| `TC 3` | `29` | 60 |
+| `TC 3` | `TC 1.1` | 60 |
+| `TC 3` | `TC 1.2` | 60 |
+| `TC 3` | `TC 2` | 60 |
+| `TC 3` | `TC 3` | 60 |
+| `TC 3` | `TEV` | 60 |
+| `TEAG` | `16/17` | 60 |
+| `TEG` | `23` | 60 |
+| `TERMG` | `TIP-4` | 120 |
+| `TERMG` | `ULT` | 120 |
+| `TEV` | `TEV` | 60 |
+| `TEV` | `VAL` | 75 |
+| `TGG` | `23` | 60 |
+| `TGG` | `TGG` | 60 |
+| `TIP-2` | `12-A` | 120 |
+| `TIP-2` | `16/17` | 120 |
+| `TIP-2` | `35.2` | 120 |
+| `TIP-2` | `CS 2` | 90 |
+| `TIP-2` | `TGG` | 120 |
+| `TIP-2` | `TIP-3` | 60 |
+| `TIP-2` | `TIP-4` | 75 |
+| `TIP-2` | `ULT` | 60 |
+| `TIP-3` | `12-A` | 120 |
+| `TIP-3` | `16/17` | 120 |
+| `TIP-3` | `20/21` | 120 |
+| `TIP-3` | `39` | 120 |
+| `TIP-3` | `TIP-2` | 60 |
+| `TIP-3` | `TIP-4` | 60 |
+| `TIP-3` | `ULT` | 55 |
+| `TIP-3` | `VAL` | 90 |
+| `TIP-4` | `23` | 105 |
+| `TIP-4` | `COS 2` | 70 |
+| `TIP-4` | `TIP-2` | 80 |
+| `TIP-4` | `TIP-3` | 60 |
+| `TIP-4` | `ULT` | 70 |
+| `ULT` | `25` | 105 |
+| `ULT` | `34` | 120 |
+| `ULT` | `CORTE` | 90 |
+| `ULT` | `CS 1` | 90 |
+| `ULT` | `TIP-2` | 60 |
+| `ULT` | `TIP-3` | 60 |
+| `VAL` | `CS 4` | 60 |
+| `VAL` | `EMB-3` | 60 |
+| `VAL` | `TEV` | 65 |
+| `VAL` | `VAL` | 60 |
+
+Par (De, Para) ausente → `TM_ZONA` do par de zonas (8.3) → 60.
