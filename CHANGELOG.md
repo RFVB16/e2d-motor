@@ -2,6 +2,7 @@
 
 ## 06/11/2026
 - **T das mudanças, método registrado e grupos reais (02, 5.19 e A.2):** tabela de 293 pares calculada com 717 mudanças reais (2025 + jan–set/2026). Ordem: berço → berço; grupo → berço ou berço → grupo; grupo → grupo (mediana); zona → zona (P60, Z3 sul e norte); padrão. Mínimo de 5 mudanças por nível, valores arredondados para cima em múltiplos de 5, sempre no sentido da mudança. Os berços numerados deixam de ser agrupados por zona e passam aos grupos definidos pela Praticagem (29–34, 35–39, 12P–20/21, 23–OUT etc.); EMBR. passa à Z3 norte. 67 pares mudaram, nenhum em 30 min ou mais.
+- **T das mudanças, nível 5 (02, 5.19):** o "padrão do motor" dá lugar a uma regra provisória para mudanças dentro da Alemoa (destino AL 1/AL 2: 90; AL 3/AL 4: 75) e dentro do BTP (80), com todas as combinações na tabela (314 pares). Provisória: substituída pelo valor calculado quando houver 5 mudanças reais. Mudanças entre Alemoa, BTP e Cosipa não ocorrem.
 - **T de navio de passageiros (02, 5.20):** 25 com entrada 75 / saída 60 para navio de passageiros; T automático por navio pelos tempos reais do SPPilots (3+ manobras, 10+ min de diferença); navio de carga fora.
 
 ## 05/11/2026

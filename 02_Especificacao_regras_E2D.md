@@ -132,7 +132,7 @@ Depois: ordenação **estável** por `datetime` (a ordem original do arquivo é 
 Lida por `ep_algoritmo.carregar_dados()`:
 
 - Aba **`T Entrada ou saída`**: colunas `Berço`, `T - TEMPO (min)`, `T - TEMPO (h)`. Gera `T_min[berço] = int(T - TEMPO (min))`. Linhas com `Berço` ou T vazio são ignoradas (a última linha da aba é uma nota de texto e cai aqui). O `int()` **trunca** valores fracionários: 83,5 → 83; 127,5 → 127; 157,5 → 157; 76,5 → 76. **[Ponto de atenção]**
-- Aba **`Mudanças de entre berços`**: colunas `Mudança`, `De`, `Para`, `Tm (min)`, `Tm (h)`. Gera `T_mud[(De, Para)] = int(Tm (min))`. A chave é **direcional**: (A, B) e (B, A) são entradas distintas. Linhas sem `De`, `Para` ou `Tm` são ignoradas. Hoje são 293 pares e todos os valores são inteiros. Os valores são calculados pelo método da seção 5.19 (06/11/2026).
+- Aba **`Mudanças de entre berços`**: colunas `Mudança`, `De`, `Para`, `Tm (min)`, `Tm (h)`. Gera `T_mud[(De, Para)] = int(Tm (min))`. A chave é **direcional**: (A, B) e (B, A) são entradas distintas. Linhas sem `De`, `Para` ou `Tm` são ignoradas. Hoje são 314 pares e todos os valores são inteiros. Os valores são calculados pelo método da seção 5.19 (06/11/2026).
 - A função `carregar_dados()` também abre um arquivo de manobras de 2025 (`Manobras_2025__original_.xlsx`, procurado em `inputs/`, `.`, `..` etc.). O conteúdo é descartado pelo motor, mas **o arquivo precisa existir**, senão o motor para com erro. **[Ponto de atenção]**
 
 As tabelas completas estão no Apêndice A.
@@ -741,13 +741,21 @@ Berço fora da lista forma um grupo só dele.
 | 2. grupo → berço ou berço → grupo | origem pelo grupo e destino exato, ou origem exata e destino pelo grupo; usa o lado que tiver **mais** mudanças | mediana |
 | 3. grupo → grupo | grupo da origem → grupo do destino | mediana |
 | 4. zona → zona | par de zonas, sem sentido (Z3 sul e norte separadas) | **P60** (valor que cobre 6 de cada 10 mudanças) |
-| 5. padrão do motor | nenhum nível com 5 mudanças | `TM_ZONA` (8.3) |
+| 5. regra provisória (Z4) | mudança dentro da Alemoa ou dentro do BTP, que têm poucos casos | valor fixo (ver abaixo) |
 
 - Todo valor é **arredondado para cima em múltiplos de 5 min**.
 - **Por que mediana nos níveis 1 a 3:** o grupo é parecido com o par; a mediana não é puxada por uma mudança atípica (atraso, espera de rebocador).
 - **Por que P60 na zona:** a zona mistura berços próximos e distantes; a mediana ficaria baixa para os pares mais longos.
 - **Sentido:** os níveis 1 a 3 respeitam o sentido (A → B é diferente de B → A), porque em vários pares o tempo muda com o sentido (ex.: TEV → VAL 72,5 × VAL → TEV 65; AL 4 → IB BC 75 × IB BC → AL 4 60). Somar os dois sentidos foi testado em 06/11/2026 e **não foi adotado** (decisão da Praticagem).
 - **Mudança no mesmo berço** (ex.: 33 → 33) segue a mesma regra; com menos de 5 mudanças, usa o grupo.
+- **Nível 5, regra provisória (Praticagem, 06/11/2026).** Dentro da Alemoa e dentro do BTP houve só 4 mudanças em 21 meses (AL 1 → AL 1 82; AL 3 → AL 4 70; BTP-2 → BTP-3 60; BTP-3 → BTP-3 100 min), poucas para calcular. Valores fixos, com folga pela incerteza (lógica de P60/P75):
+  - **Alemoa → AL 1 ou AL 2: 90 min** (amarração em AL 1 e AL 2 é mais complexa e demora mais);
+  - **Alemoa → AL 3 ou AL 4: 75 min**;
+  - **BTP → BTP: 80 min** (as manobras do BTP são bem mais longas que as do Tecon e do Embraport: T de entrada/saída 100–105 contra 60–90; por isso os 60 min das mudanças internas desses terminais não foram usados).
+  - Todas as combinações AL 1–AL 4 entre si e BTP-1–BTP-3 entre si estão na tabela (25 linhas).
+  - **Substituição:** é provisório. Quando a tabela for recalculada e o grupo (Alemoa → Alemoa ou BTP → BTP), o par ou o berço tiver 5 ou mais mudanças reais, o valor calculado pelos níveis 1 a 4 substitui o provisório.
+- **Mudanças entre Alemoa, BTP e Cosipa não ocorrem na operação** (petróleo, contêiner e granel), por isso não têm T.
+- **`TM_ZONA` (8.3)** deixa de fazer parte do método: só é usado pelo motor, como último recurso, para um par que **nunca ocorreu** e por isso não está na tabela.
 - O **giro sem atracar (FB → FB)** não é mudança: continua com a regra 5.14.
 - Por que 5 e não menos: a maioria dos pares tem 1 ou 2 mudanças, e uma mudança isolada pode ter sido um atraso. Ex.: 12-A → 39 teve uma única, de 150 min; o T dele (75) vem das 8 mudanças de 12P–20/21 → 35–39.
 
@@ -760,11 +768,11 @@ Berço fora da lista forma um grupo só dele.
 | TIP-3 → 16/17 | 4 | 2. berço → grupo | TIP-3 → 12P–20/21 (8) | 120 |
 | EMB-3 → 34 | 3 | 3. grupo → grupo | Embraport → 29–34 (11) | 60 |
 | DOW → AL 4 | 2 | 4. zona → zona | Z2 ↔ Z4 (35) | 105 |
-| AL 3 → AL 4 | 1 | 5. padrão | Z4 ↔ Z4 só tem 4 | 80 |
+| AL 3 → AL 4 | 1 | 5. regra provisória (Z4) | Alemoa → AL 3/AL 4 | 75 |
 
 **Uso do T na escala.** Mudança 32 → EMB-4 às 10:00, próxima manobra do prático é saída do TC 3: disponível = r15(10:00 + 65 + 25 + 8 de lancha) = 11:45.
 
-**Resultado em 06/11/2026.** 293 pares na tabela (antes 207). Pares por nível: 35 berço → berço, 95 grupo → berço/berço → grupo, 93 grupo → grupo, 65 zona, 4 padrão. Em relação à tabela anterior (grupos por zona), 67 pares mudaram (37 subiram, 30 desceram; mediana 10 min; nenhum ≥ 30 min). Erro médio contra o término real: 10,8 → 10,7 min; mudanças que passam do T em mais de 25 min: 51 → 50.
+**Resultado em 06/11/2026.** 314 pares na tabela (antes 207). Pares por nível: 35 berço → berço, 95 grupo → berço/berço → grupo, 93 grupo → grupo, 65 zona, 25 regra provisória da Z4 (4 já tinham ocorrido, 21 acrescentados), mais o giro FB → FB (5.14). Em relação à tabela anterior (grupos por zona), 67 pares mudaram (37 subiram, 30 desceram; mediana 10 min; nenhum ≥ 30 min). Erro médio contra o término real: 10,8 → 10,7 min; mudanças que passam do T em mais de 25 min: 51 → 50.
 
 **Arquivos.**
 - Tabela usada pelo motor: `inputs\Tempo_T__2025_.xlsx` e `motor_e2d\inputs\Tempo_T__2025_.xlsx`, aba `Mudanças de entre berços` (cópias anteriores: `Tempo_T__2025__antes_mudancas.xlsx`, `Tempo_T__2025__antes_grupos.xlsx`).
@@ -946,7 +954,7 @@ Par ausente → 0 (não ocorre, pois a matriz está completa).
 | Z2↔Z5 | 130 |
 | demais (inclui Z4↔Z5 e pares com Z1) | 60 (`TM_ZONA_DEFAULT`) |
 
-Até 05/11/2026, 131 das 312 mudanças da pauta de 2026 não tinham o par na tabela e usavam `TM_ZONA`. Desde a tabela de 06/11/2026 (5.19), todo par que ocorreu em 2025 ou jan–set/2026 está na tabela; o `TM_ZONA` fica só para par novo.
+Até 05/11/2026, 131 das 312 mudanças da pauta de 2026 não tinham o par na tabela e usavam `TM_ZONA`. Desde a tabela de 06/11/2026 (5.19), todo par que ocorreu em 2025 ou jan–set/2026 está na tabela, mais todas as combinações dentro da Alemoa e do BTP; o `TM_ZONA` fica só para par que nunca ocorreu.
 
 ### 8.4 `ATALAIA`
 
@@ -1121,7 +1129,7 @@ Valores atuais do arquivo. "T usado" = valor após o `int()` do motor.
 
 Berço ausente desta tabela (inclusive os não cadastrados em `BERCO_ZONE`) → T = 60.
 
-### A.2 Aba `Mudanças de entre berços` (Tm por par direcional De → Para; 293 pares; método em 5.19)
+### A.2 Aba `Mudanças de entre berços` (Tm por par direcional De → Para; 314 pares; método em 5.19)
 
 | De | Para | Tm (min) |
 |---|---|---|
@@ -1231,31 +1239,52 @@ Berço ausente desta tabela (inclusive os não cadastrados em `BERCO_ZONE`) → 
 | `39` | `23` | 80 |
 | `AGEO` | `AL 4` | 60 |
 | `AGEO` | `DOW` | 75 |
-| `AL 1` | `AL 1` | 80 |
+| `AL 1` | `AL 1` | 90 |
+| `AL 1` | `AL 2` | 90 |
+| `AL 1` | `AL 3` | 75 |
+| `AL 1` | `AL 4` | 75 |
 | `AL 1` | `OUT-1` | 95 |
+| `AL 2` | `AL 1` | 90 |
+| `AL 2` | `AL 2` | 90 |
+| `AL 2` | `AL 3` | 75 |
+| `AL 2` | `AL 4` | 75 |
 | `AL 2` | `DOW` | 90 |
 | `AL 2` | `IB SP` | 60 |
 | `AL 2` | `IB-OE` | 70 |
 | `AL 3` | `AGEO` | 60 |
-| `AL 3` | `AL 4` | 80 |
+| `AL 3` | `AL 1` | 90 |
+| `AL 3` | `AL 2` | 90 |
+| `AL 3` | `AL 3` | 75 |
+| `AL 3` | `AL 4` | 75 |
 | `AL 3` | `DOW` | 90 |
 | `AL 3` | `IB BC` | 60 |
 | `AL 3` | `IB SP` | 60 |
 | `AL 3` | `IB-OE` | 70 |
 | `AL 4` | `AGEO` | 60 |
+| `AL 4` | `AL 1` | 90 |
+| `AL 4` | `AL 2` | 90 |
+| `AL 4` | `AL 3` | 75 |
+| `AL 4` | `AL 4` | 75 |
 | `AL 4` | `CS 2` | 65 |
 | `AL 4` | `DOW` | 90 |
 | `AL 4` | `IB BC` | 75 |
 | `AL 4` | `IB SP` | 60 |
 | `AL 4` | `IB-OE` | 60 |
+| `BTP-1` | `BTP-1` | 80 |
+| `BTP-1` | `BTP-2` | 80 |
+| `BTP-1` | `BTP-3` | 80 |
 | `BTP-1` | `EMB-1` | 70 |
 | `BTP-1` | `EMB-2` | 70 |
 | `BTP-1` | `TC 3` | 105 |
+| `BTP-2` | `BTP-1` | 80 |
+| `BTP-2` | `BTP-2` | 80 |
 | `BTP-2` | `BTP-3` | 80 |
 | `BTP-2` | `EMB-1` | 75 |
 | `BTP-2` | `EMB-2` | 70 |
 | `BTP-2` | `TC 1.2` | 105 |
 | `BTP-3` | `25` | 95 |
+| `BTP-3` | `BTP-1` | 80 |
+| `BTP-3` | `BTP-2` | 80 |
 | `BTP-3` | `BTP-3` | 80 |
 | `BTP-3` | `EMB-1` | 75 |
 | `BTP-3` | `EMB-2` | 70 |
