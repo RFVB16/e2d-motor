@@ -10,7 +10,7 @@ if not exist "%REPO%\.git" (
   exit /b 0
 )
 set "DST=%REPO%\codigo_referencia"
-for %%F in (E2D_pauta_automatica.user.js atualizar.bat atualizar_oculto.vbs consertar_site.bat ep_algoritmo.py ep_atualizar.py ep_server.py escala_grafica.py escala_grafica_modelos.npz gerar_2026.py instalar_servidor_inicio.bat raspar_historico.py servidor_oculto.vbs sincronizar_repo.bat) do (
+for %%F in (E2D_pauta_automatica.user.js atualizar.bat atualizar_oculto.vbs consertar_site.bat ep_algoritmo.py ep_atualizar.py ep_server.py escala_grafica.py escala_grafica_modelos.npz gerar_2026.py tempos_passageiros.py instalar_servidor_inicio.bat raspar_historico.py servidor_oculto.vbs sincronizar_repo.bat) do (
   if exist "%SRC%%%F" copy /Y "%SRC%%%F" "%DST%\%%F" >nul
 )
 if exist "%SRC%instalar_agendamento_10min.bat" copy /Y "%SRC%instalar_agendamento_10min.bat" "%DST%\instalar_agendamento.bat" >nul
@@ -19,6 +19,10 @@ for %%F in (carregar_pauta.py ep_algoritmo.py ep_sim_v3_corrigido.py grupo_a_dat
 )
 if exist "%SRC%inputs\Tempo_T__2025_.xlsx" copy /Y "%SRC%inputs\Tempo_T__2025_.xlsx" "%DST%\inputs\Tempo_T__2025_.xlsx" >nul
 if exist "%SRC%motor_e2d\inputs\Tempo_T__2025_.xlsx" copy /Y "%SRC%motor_e2d\inputs\Tempo_T__2025_.xlsx" "%DST%\motor_e2d\inputs\Tempo_T__2025_.xlsx" >nul
+REM 06/11/2026: tabelas de navios de passageiros (lista e T); nao envia os arquivos gerados em dados\
+for %%F in (navios_passageiros.csv T_passageiros.csv) do (
+  if exist "%SRC%inputs\%%F" copy /Y "%SRC%inputs\%%F" "%DST%\inputs\%%F" >nul
+)
 
 REM Textos e testes do PACOTE (especificacao, CHANGELOG, LEIA-ME, resultado esperado) - 29/10/2026
 set "PAC=%SRC%PACOTE_IMPLEMENTACAO"
