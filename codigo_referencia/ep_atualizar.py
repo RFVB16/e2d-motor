@@ -2252,7 +2252,16 @@ def gerar_painel(passadas, futuras, historico, ultima_esc, estado_info, deltas_m
                 juntadas.append(({'datetime': _d, 'vessel': _v, 'de': str(_r.From).strip(), 'para': str(_r.To).strip(),
                                   'pratico': '/'.join(x[0] for x in _pp), 'ab': '/'.join(x[1] for x in _pp), 'status': 'CANCELADA', 'cancelada': True,
                                   'calado': '', 'bordo': '', 'proxima': _CANC_DT.get((_d, _v), ''), 'escalacao': ''}, False))
-            juntadas.sort(key=lambda x: pd.Timestamp(x[0]['datetime']))
+            # 08/11/2026: no mesmo horário, a cancelada fica na posição da pauta ao vivo (dados/ordem_ao_vivo.csv),
+            # ex.: MOYRA (DOW) antes do CMA CGM MISSISSIPPI às 14:00; sem registro de ordem, mantém a ordem que veio
+            try:
+                _ov = pd.read_csv(_DIR / 'dados' / 'ordem_ao_vivo.csv', encoding='utf-8-sig', dtype=str)
+                _opos = {(pd.Timestamp(a).floor('min'), str(b).strip()): int(c) for a, b, c in zip(_ov['DT'], _ov['Vessel'], _ov['pos'])}
+            except Exception:
+                _opos = {}
+            _jk = [(pd.Timestamp(x[0]['datetime']), _opos.get((pd.Timestamp(x[0]['datetime']).floor('min'), str(x[0]['vessel']).strip()), 1000 + i))
+                   for i, x in enumerate(juntadas)]
+            juntadas = [x for _, x in sorted(zip(_jk, juntadas), key=lambda t: t[0])]
     except Exception as _e:
         print(f'[cancelada] não mostrada: {_e}')
 
