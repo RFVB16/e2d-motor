@@ -440,14 +440,18 @@ pickle.dump(_GIRO_T, open(MOTOR / '_giro_T.pkl', 'wb'))
 
 # arquivos de entrada do motor
 PAUTA_M = MOTOR / '_pauta_live.xlsx'
-# as canceladas entram na pauta do motor no seu horário (depois das demais do mesmo horário), sem especial
+# as canceladas entram na pauta do motor no seu horário, na posição da ordem da pauta ao vivo (08/11/2026), sem especial
 _pm = pd.DataFrame({'DT': p.DT, 'Vessel': p.Vessel, 'De': p.De, 'Para': p.Para, 'Termino': p.Termino.astype(str),
                     '_pred': [x or '' for x in pred]})
 if len(_canc):
     _cx = pd.DataFrame({'DT': pd.to_datetime(_canc.DT), 'Vessel': _canc.Vessel.astype(str).str.strip(),
                         'De': _canc.From.astype(str).str.strip(), 'Para': _canc.To.astype(str).str.strip(), 'Termino': '', '_pred': ''})
     _cx = _cx[(_cx.DT >= p.DT.min()) & (_cx.DT <= p.DT.max())]
-    _pm = pd.concat([_pm, _cx], ignore_index=True).sort_values('DT', kind='stable').reset_index(drop=True)
+    _pm = pd.concat([_pm, _cx], ignore_index=True)
+    # 08/11/2026: a cancelada volta para a posição dela na ordem da pauta ao vivo (ex.: MOYRA antes do
+    # CMA CGM MISSISSIPPI às 14:00, a mais curta primeiro); sem registro de ordem, fica depois das demais
+    _pm['_o'] = [_ORD_POS.get((d, str(v).strip()), 1000 + i) for i, (d, v) in enumerate(zip(_pm.DT, _pm.Vessel))]
+    _pm = _pm.sort_values(['DT', '_o'], kind='stable').drop(columns='_o').reset_index(drop=True)
 _CANC_KEY = {(d.strftime('%d/%m/%Y'), d.strftime('%H:%M'), str(v).strip()): {'visto_em': str(ve)}
              for d, v, ve in zip(pd.to_datetime(_canc.DT), _canc.Vessel, _canc.visto_em)} if len(_canc) else {}
 pickle.dump(_CANC_KEY, open(MOTOR / '_canceladas.pkl', 'wb'))
@@ -553,6 +557,9 @@ def _inconsistencia():
     # Manobras anteriores à última mudança de regra foram escaladas pela regra antiga: não contam aqui
     # (senão a regra nova acusaria o passado de 'fora da vez' e refaria escalações já cumpridas).
     L = [x for x in L if x[0] >= REGRA_DESDE]
+    # 08/11/2026: manobra cancelada não conta: o prático dela foi escalado com a pauta daquela hora e fica fixo
+    # (ex.: MOYRA 08/11 14:00, cancelada; na ordem certa ela vem antes do CMA CGM MISSISSIPPI)
+    L = [x for x in L if (pd.Timestamp(x[0]).strftime('%d/%m/%Y'), pd.Timestamp(x[0]).strftime('%H:%M'), str(x[1]).strip()) not in _CANC_KEY]
     graves = [x for x in L if (not x[6]) or x[5] >= 4]
     ini = min([x[0] for x in graves], default=None)
     for x in L:      # 3 ou mais no mesmo período de 48 h
