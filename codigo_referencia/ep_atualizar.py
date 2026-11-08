@@ -798,6 +798,16 @@ def montar_relatorio(manobras):
     _REL['dia'] = {d_: {k: dict(med=float(pd.Series(v).median()), n=len(v), lt5=round(100 * sum(1 for x in v if x < 300) / len(v)))
                         for k, v in x.items()} for d_, x in DIA.items()}
     _REL['d'], _REL['i'] = D, I
+    # 08/11/2026: total de manobras do porto em cada dia operacional (07:30 → 07:29), para mostrar embaixo do dia
+    # no relatório. Conta manobras de prático: navio de 2 práticos conta 2; cancelada não entra (fica fora da planilha).
+    _nm = {}
+    for _m in manobras:
+        try:
+            _dk = str(od(pd.Timestamp(_m['datetime'])))
+        except Exception:
+            continue
+        _nm[_dk] = _nm.get(_dk, 0) + 1
+    _REL['nm'] = _nm
     print(f'[Relatório] {len(D)} práticos (dias seguidos de serviço) preparados (E12 com nome até {corte:%d/%m %H:%M})')
 
 # ── Info pauta RT ─────────────────────────────────────────────────────────────
@@ -2713,7 +2723,7 @@ var st=Z[3]*H,t0=Math.ceil((S-450*60000)/st)*st+450*60000,tk='';for(var t=t0;t<=
 var md='';for(var M=Math.floor(S/DIA)*DIA;M<E;M+=DIA){{var a=X(Math.max(M,S)),b=X(Math.min(M+5*H,E));if(b>a)md+='<rect x="'+a.toFixed(1)+'" y="6" width="'+(b-a).toFixed(1)+'" height="60" fill="#0d1b4c" fill-opacity="0.14" pointer-events="none"/><text x="'+((a+b)/2).toFixed(1)+'" y="5" text-anchor="middle" font-size="8" fill="#0d1b4c">madrugada</text>';}}
 var dv='';if(mov&&r.ag<E){{var xa=Math.max(0,X(r.ag));dv+='<rect x="'+xa.toFixed(1)+'" y="6" width="'+(W-xa).toFixed(1)+'" height="60" fill="#fafafa"/>'+(W-xa>110?'<text x="'+((xa+W)/2).toFixed(1)+'" y="40" text-anchor="middle" font-size="11" fill="#999">ainda não aconteceu</text>':'')+'<line x1="'+xa.toFixed(1)+'" y1="4" x2="'+xa.toFixed(1)+'" y2="68" stroke="#1565c0" stroke-width="1.5"><title>agora ('+_hm(r.ag)+')</title></line>';}}
 out+='<svg viewBox="-92 0 '+(W+100)+' 84" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Arial">'+tk+
-'<text x="-90" y="36" font-size="13" font-weight="700"'+(mov?' fill="#1565c0"':'')+'>'+Z[2]+'</text>'+(mov?'<text x="-90" y="50" font-size="10" fill="#1565c0">hoje</text>':'')+
+'<text x="-90" y="36" font-size="13" font-weight="700"'+(mov?' fill="#1565c0"':'')+'>'+Z[2]+'</text>'+(mov?'<text x="-90" y="50" font-size="10" fill="#1565c0">hoje</text>':'')+(function(){{var kd=new Date(S),kk=kd.getUTCFullYear()+'-'+String(kd.getUTCMonth()+1).padStart(2,'0')+'-'+String(kd.getUTCDate()).padStart(2,'0'),nn=(REL.nm||{{}})[kk];return nn?'<text x="-90" y="'+(mov?62:52)+'" font-size="10" fill="#555">'+nn+' manobras<title>manobras do porto neste dia operacional (07:30 a 07:29)'+(mov?', contando as que ainda estão na pauta':'')+'</title></text>':'';}})()+
 '<text x="-6" y="24" text-anchor="end" font-size="11" font-weight="600">E2D</text>'+linha(r.b2,8)+
 '<text x="-6" y="56" text-anchor="end" font-size="11" font-weight="600">E12</text>'+linha(r.b12,40)+md+dv+'</svg>';}});
 return '<div class="barra">'+out+'</div>'+
