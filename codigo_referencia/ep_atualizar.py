@@ -763,7 +763,7 @@ def montar_relatorio(manobras):
             for g in _g:
                 if g[6] and (_g is g12 or g[3] == 'longo') and od(g[5]) in _dias_w:
                     _lst.append((od(g[5]), g[2]))
-        lim_b = min(W1, fimw)
+        lim_b = min(max(W1, pd.Timestamp(datetime.now()).floor('min')), pd.Timestamp(_seq[-1]) + pd.Timedelta(days=1) + D0)   # 08/11/2026: até a hora da rodada (a manobra que começa no último minuto com nome aparece)
         _b0 = ini   # barras: um dia por barra, de 07:30 a 07:30 (hoje: até agora)   # a barra recua até a última manobra antes da janela (sem folga no meio)
         def _seg(L, gaps, ant):
             ms = [[int(pd.Timestamp(max(_b0, dt)).value // 10**6), int(pd.Timestamp(min(end, lim_b)).value // 10**6), ab, lab]
@@ -785,7 +785,7 @@ def montar_relatorio(manobras):
                       m12=fmt(l12), m2=fmt(l2), s12=s12, s2=s2,
                       c2=dict(med=_med(_l2), n=len(_l2), lt5=sum(1 for v in _l2 if v < 300)),
                       c12=dict(med=_med(_l12), n=len(_l12), lt5=sum(1 for v in _l12 if v < 300)),
-                      b0=int(pd.Timestamp(_b0).value // 10**6), b1=int(pd.Timestamp(_b0 + pd.Timedelta(days=len(_seq))).value // 10**6), ag=int(pd.Timestamp(W1).value // 10**6),
+                      b0=int(pd.Timestamp(_b0).value // 10**6), b1=int(pd.Timestamp(_b0 + pd.Timedelta(days=len(_seq))).value // 10**6), ag=int(max(pd.Timestamp(W1), pd.Timestamp(datetime.now()).floor('min')).value // 10**6),   # 08/11/2026: "agora" = hora da rodada (antes: só até onde a E12 tem nome, e a manobra que começava nesse minuto ficava escondida)
                       dd=[int((pd.Timestamp(x) + D0).value // 10**6) for x in _seq if pd.Timestamp(x) + pd.Timedelta(days=1) + D0 <= W1],   # dias já fechados
                       hj=(int((pd.Timestamp(od(W1)) + D0).value // 10**6) if od(W1) in _seq else None),   # hoje (em andamento): de 07:30 até agora
                       vi=int(pd.Timestamp(od(_b0)).value // 10**6 + D0.value // 10**6), vd=_vd,
@@ -800,14 +800,17 @@ def montar_relatorio(manobras):
     _REL['d'], _REL['i'] = D, I
     # 08/11/2026: total de manobras do porto em cada dia operacional (07:30 → 07:29), para mostrar embaixo do dia
     # no relatório. Conta manobras de prático: navio de 2 práticos conta 2; cancelada não entra (fica fora da planilha).
-    _nm = {}
+    _nm, _nma = {}, {}
     for _m in manobras:
         try:
             _dk = str(od(pd.Timestamp(_m['datetime'])))
         except Exception:
             continue
         _nm[_dk] = _nm.get(_dk, 0) + 1
+        if _dk == str(od(pd.Timestamp(datetime.now()))) and pd.Timestamp(_m['datetime']) <= pd.Timestamp(datetime.now()):
+            _nma[_dk] = _nma.get(_dk, 0) + 1
     _REL['nm'] = _nm
+    _REL['nma'] = _nma   # só as que já começaram (hoje: "até agora")
     print(f'[Relatório] {len(D)} práticos (dias seguidos de serviço) preparados (E12 com nome até {corte:%d/%m %H:%M})')
 
 # ── Info pauta RT ─────────────────────────────────────────────────────────────
@@ -2723,7 +2726,7 @@ var st=Z[3]*H,t0=Math.ceil((S-450*60000)/st)*st+450*60000,tk='';for(var t=t0;t<=
 var md='';for(var M=Math.floor(S/DIA)*DIA;M<E;M+=DIA){{var a=X(Math.max(M,S)),b=X(Math.min(M+5*H,E));if(b>a)md+='<rect x="'+a.toFixed(1)+'" y="6" width="'+(b-a).toFixed(1)+'" height="60" fill="#0d1b4c" fill-opacity="0.14" pointer-events="none"/><text x="'+((a+b)/2).toFixed(1)+'" y="5" text-anchor="middle" font-size="8" fill="#0d1b4c">madrugada</text>';}}
 var dv='';if(mov&&r.ag<E){{var xa=Math.max(0,X(r.ag));dv+='<rect x="'+xa.toFixed(1)+'" y="6" width="'+(W-xa).toFixed(1)+'" height="60" fill="#fafafa"/>'+(W-xa>110?'<text x="'+((xa+W)/2).toFixed(1)+'" y="40" text-anchor="middle" font-size="11" fill="#999">ainda não aconteceu</text>':'')+'<line x1="'+xa.toFixed(1)+'" y1="4" x2="'+xa.toFixed(1)+'" y2="68" stroke="#1565c0" stroke-width="1.5"><title>agora ('+_hm(r.ag)+')</title></line>';}}
 out+='<svg viewBox="-92 0 '+(W+100)+' 84" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Arial">'+tk+
-'<text x="-90" y="36" font-size="13" font-weight="700"'+(mov?' fill="#1565c0"':'')+'>'+Z[2]+'</text>'+(mov?'<text x="-90" y="50" font-size="10" fill="#1565c0">hoje</text>':'')+(function(){{var kd=new Date(S),kk=kd.getUTCFullYear()+'-'+String(kd.getUTCMonth()+1).padStart(2,'0')+'-'+String(kd.getUTCDate()).padStart(2,'0'),nn=(REL.nm||{{}})[kk];return nn?'<text x="-90" y="'+(mov?62:52)+'" font-size="10" fill="#555">'+nn+' manobras<title>manobras do porto neste dia operacional (07:30 a 07:29)'+(mov?', contando as que ainda estão na pauta':'')+'</title></text>':'';}})()+
+'<text x="-90" y="36" font-size="13" font-weight="700"'+(mov?' fill="#1565c0"':'')+'>'+Z[2]+'</text>'+(mov?'<text x="-90" y="50" font-size="10" fill="#1565c0">hoje</text>':'')+(function(){{var kd=new Date(S),kk=kd.getUTCFullYear()+'-'+String(kd.getUTCMonth()+1).padStart(2,'0')+'-'+String(kd.getUTCDate()).padStart(2,'0'),nn=mov?(REL.nma||{{}})[kk]:(REL.nm||{{}})[kk];return nn?'<text x="-90" y="'+(mov?62:52)+'" font-size="10" fill="#555">'+nn+(mov?' até agora':' manobras')+'<title>manobras do porto neste dia operacional (07:30 a 07:29)'+(mov?': as que já começaram até a hora da atualização; na pauta do dia todo são '+(REL.nm||{{}})[kk]:'')+'</title></text>':'';}})()+
 '<text x="-6" y="24" text-anchor="end" font-size="11" font-weight="600">E2D</text>'+linha(r.b2,8)+
 '<text x="-6" y="56" text-anchor="end" font-size="11" font-weight="600">E12</text>'+linha(r.b12,40)+md+dv+'</svg>';}});
 return '<div class="barra">'+out+'</div>'+
