@@ -125,6 +125,10 @@ echo          ^(aguarde 30s pra propagar^)
 echo ====================================================
 echo.
 
+REM 10/11/2026: painel paralelo MARCO ZERO (ep_painel_marco0.html). Nao mexe no painel oficial;
+REM se falhar, nada mais e afetado. O registro da rodada fica em marco0\ultima_rodada.log
+python "%PROJETO%\painel_marco0.py" > "%PROJETO%\marco0\ultima_rodada.log" 2>&1
+
 REM 5. Repositorio do motor (GitHub privado): envia o codigo se mudou. Nao interrompe o painel se falhar.
 call "%PROJETO%\sincronizar_repo.bat"
 
