@@ -620,6 +620,35 @@ try:
 except Exception as _e:
     print(f'[congela] não gravado: {_e}')
 
+
+# 10/11/2026: a fila exibida ("Escalação") de cada linha fica congelada no momento da escalação (1 h antes da manobra).
+# O painel não reescreve o passado com informação que só apareceu depois (ex.: navio de especial escalado mais tarde).
+# Chave = data/hora + navio + prático: se o prático da linha mudar antes de começar, a linha nova ganha a sua própria fila.
+_DISP_F = DIR / 'dados' / 'escalacao_display.csv'
+_disp = {}
+try:
+    if _DISP_F.exists():
+        _dd = pd.read_csv(_DISP_F, dtype=str, keep_default_na=False)
+        _disp = {(a, b, c): e for a, b, c, e in zip(_dd.DT, _dd.Vessel, _dd.Pratico, _dd.Escalacao)}
+    _agora_d = pd.Timestamp(dt.datetime.now()); _novas_d = []
+    for _row in openpyxl.load_workbook(MOTOR / OUT_M, read_only=True).worksheets[0].iter_rows(min_row=2, values_only=True):
+        if not isinstance(_row[0], int) or str(_row[8] or '').startswith('C') or not _row[9]:
+            continue
+        _d = pd.to_datetime(f'{_row[1]} {_row[2]}', dayfirst=True)
+        if _d - pd.Timedelta(minutes=60) > _agora_d:
+            continue
+        _k = (_d.strftime('%Y-%m-%d %H:%M'), str(_row[5] or '').strip(), str(_row[4] or '').strip())
+        if _k not in _disp:
+            _disp[_k] = str(_row[9])
+            _novas_d.append({'DT': _k[0], 'Vessel': _k[1], 'Pratico': _k[2], 'Escalacao': _disp[_k],
+                             'registrado_em': _agora_d.strftime('%Y-%m-%d %H:%M')})
+    if _novas_d:
+        _DISP_F.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(_novas_d).to_csv(_DISP_F, mode='a', header=not _DISP_F.exists(), index=False, encoding='utf-8')
+        print(f'[fila congelada] {len(_novas_d)} linha(s) nova(s)')
+except Exception as _e:
+    print(f'[fila congelada] não gravado: {_e}')
+
 # registra o prático de cada manobra cancelada (é quem estava escalado nela)
 try:
     if len(_canc):
@@ -655,6 +684,7 @@ for row in src.iter_rows(min_row=2, values_only=True):
         _cpain.append({'DT': pd.to_datetime(f'{data} {hora}', dayfirst=True).strftime('%Y-%m-%d %H:%M'), 'Vessel': str(nav).strip(),
                        'Pratico': str(prat).strip(), 'AB': str(st)[1:]})   # AB = o que ela seria (A ou B)
         continue
+    esc = _disp.get((pd.to_datetime(f'{data} {hora}', dayfirst=True).strftime('%Y-%m-%d %H:%M'), str(nav or '').strip(), str(prat or '').strip()), esc)
     ws.write_row(ri, 0, [seq, data, hora, term or '', prat, nav, de, para, '', '', '', st or '', '', esc or ''])
     ri += 1; n += 1
 wb.close()
