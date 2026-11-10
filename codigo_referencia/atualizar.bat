@@ -64,10 +64,16 @@ if not exist "%PROJETO%\ep_painel.html" (
 REM Modo manual: abre o painel local logo que ele fica pronto (05/11/2026), mesmo que a publicacao falhe depois
 if /i not "%~1"=="auto" start "" "%PROJETO%\ep_painel.html"
 
+REM 10/11/2026: painel paralelo MARCO ZERO (local: ep_painel_marco0.html; site: marco0.html).
+REM Nao mexe no painel oficial; se falhar, o oficial e publicado normalmente. Registro: marco0\ultima_rodada.log
+del /f /q "%PROJETO%\ep_painel_marco0_publico.html" >nul 2>&1
+python "%PROJETO%\painel_marco0.py" > "%PROJETO%\marco0\ultima_rodada.log" 2>&1
+
 REM 3. Copia para pasta publica
 echo [2/4] Copiando painel para pasta publica...
 REM 05/11/2026: o site recebe a versao sem a margem extra (M); se ela nao existir, usa o painel completo
 if exist "%PROJETO%\ep_painel_publico.html" (copy /Y "%PROJETO%\ep_painel_publico.html" "%PUBLICO%\index.html" >nul) else (copy /Y "%PROJETO%\ep_painel.html" "%PUBLICO%\index.html" >nul)
+if exist "%PROJETO%\ep_painel_marco0_publico.html" copy /Y "%PROJETO%\ep_painel_marco0_publico.html" "%PUBLICO%\marco0.html" >nul
 
 REM 4. Commit + push
 cd /d "%PUBLICO%"
@@ -97,6 +103,7 @@ if errorlevel 1 (
     git reset origin/main >nul 2>&1
 )
 git add index.html >nul
+if exist marco0.html git add marco0.html >nul
 REM Data/hora pelo PowerShell (o wmic foi removido nas versoes novas do Windows)
 for /f %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd_HH:mm"') do set "_TS=%%a"
 git commit --allow-empty -m "Painel %_TS%" >nul 2>&1
@@ -121,13 +128,10 @@ echo  Sucesso! Tudo atualizado.
 echo.
 echo  Local:  ep_painel.html
 echo  Online: https://rfvb16.github.io/ep-santos/
+echo  Marco zero: https://rfvb16.github.io/ep-santos/marco0.html
 echo          ^(aguarde 30s pra propagar^)
 echo ====================================================
 echo.
-
-REM 10/11/2026: painel paralelo MARCO ZERO (ep_painel_marco0.html). Nao mexe no painel oficial;
-REM se falhar, nada mais e afetado. O registro da rodada fica em marco0\ultima_rodada.log
-python "%PROJETO%\painel_marco0.py" > "%PROJETO%\marco0\ultima_rodada.log" 2>&1
 
 REM 5. Repositorio do motor (GitHub privado): envia o codigo se mudou. Nao interrompe o painel se falhar.
 call "%PROJETO%\sincronizar_repo.bat"
