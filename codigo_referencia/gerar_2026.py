@@ -335,6 +335,7 @@ FIM = [fim_de(i) for i in range(len(p))]
 p['dop'] = [dia_op(t) for t in p.DT]
 N = 12
 livre = {}; z5c = {}; pred = [None] * len(p); ptr = None; buf = []
+_vez = {}   # 10/11/2026: estado da vez da E12 depois de cada navio (seta, pendentes, escala do dia) — número dos especiais na fila exibida
 for dop, ix in p.groupby('dop', sort=False).indices.items():
     tipo, P = escala.get(dop, ('D2', [None] * 12))
     bold = [x for x in seq_dia.get(dop, []) if x in P][:1] if tipo == 'D1' else []
@@ -356,6 +357,7 @@ for dop, ix in p.groupby('dop', sort=False).indices.items():
                         while ptr != k_:
                             buf.append(ptr); ptr = (ptr + 1) % N
                         ptr = (ptr + 1) % N
+            _vez[(p.DT.iat[i0], str(p.Vessel.iat[i0]).strip())] = (ptr, list(buf), list(P))
             j += n; continue
         ok = lambda q: P[q] is not None and livre.get(P[q], pd.Timestamp.min) <= t_ and not (zz and P[q] not in ESP and z5c.get((dop, P[q]), 0) >= 1)
         took = []; k = 0; cls = None; guard = 0
@@ -380,8 +382,10 @@ for dop, ix in p.groupby('dop', sort=False).indices.items():
             nm = P[q]; pred[ix[j]] = nm; livre[nm] = FIM[ix[j]]
             if zz: z5c[(dop, nm)] = z5c.get((dop, nm), 0) + 1
             j += 1
+        _vez[(p.DT.iat[i0], str(p.Vessel.iat[i0]).strip())] = (ptr, list(buf), list(P))
         if not took:
             j += 1
+pickle.dump(_vez, open(MOTOR / '_e12_vez.pkl', 'wb'))
 n_esp = sum(1 for x in pred if x in ESP)
 print(f'[especiais] {n_esp} manobras de especiais ({sum(1 for i,x in enumerate(pred) if x in ESP and (p.DT.iat[i],p.Vessel.iat[i]) in real)} pelo SPPILOTS)')
 
@@ -624,7 +628,9 @@ except Exception as _e:
 # 10/11/2026: a fila exibida ("Escalação") de cada linha fica congelada no momento da escalação (1 h antes da manobra).
 # O painel não reescreve o passado com informação que só apareceu depois (ex.: navio de especial escalado mais tarde).
 # Chave = data/hora + navio + prático: se o prático da linha mudar antes de começar, a linha nova ganha a sua própria fila.
-_DISP_F = DIR / 'dados' / 'escalacao_display.csv'
+_DISP_F = DIR / 'dados' / 'escalacao_display_v2.csv'   # v2: especiais pela posição na vez da E12 (regra de 10/11/2026)
+import vez_e12
+_vez_e12 = lambda esc, d, nv: vez_e12.reescrever(esc, _vez.get((pd.Timestamp(d).floor('min'), str(nv).strip())))
 _disp = {}
 try:
     if _DISP_F.exists():
@@ -639,7 +645,7 @@ try:
             continue
         _k = (_d.strftime('%Y-%m-%d %H:%M'), str(_row[5] or '').strip(), str(_row[4] or '').strip())
         if _k not in _disp:
-            _disp[_k] = str(_row[9])
+            _disp[_k] = _vez_e12(str(_row[9]), _d, _row[5])
             _novas_d.append({'DT': _k[0], 'Vessel': _k[1], 'Pratico': _k[2], 'Escalacao': _disp[_k],
                              'registrado_em': _agora_d.strftime('%Y-%m-%d %H:%M')})
     if _novas_d:
@@ -684,7 +690,8 @@ for row in src.iter_rows(min_row=2, values_only=True):
         _cpain.append({'DT': pd.to_datetime(f'{data} {hora}', dayfirst=True).strftime('%Y-%m-%d %H:%M'), 'Vessel': str(nav).strip(),
                        'Pratico': str(prat).strip(), 'AB': str(st)[1:]})   # AB = o que ela seria (A ou B)
         continue
-    esc = _disp.get((pd.to_datetime(f'{data} {hora}', dayfirst=True).strftime('%Y-%m-%d %H:%M'), str(nav or '').strip(), str(prat or '').strip()), esc)
+    _dk = pd.to_datetime(f'{data} {hora}', dayfirst=True)
+    esc = _disp.get((_dk.strftime('%Y-%m-%d %H:%M'), str(nav or '').strip(), str(prat or '').strip())) or _vez_e12(esc, _dk, nav)
     ws.write_row(ri, 0, [seq, data, hora, term or '', prat, nav, de, para, '', '', '', st or '', '', esc or ''])
     ri += 1; n += 1
 wb.close()
