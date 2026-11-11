@@ -38,7 +38,7 @@ Os especiais fazem exatamente as mesmas manobras que fariam na E12: no passado, 
 
 ### `Tempo_T__2025_.xlsx` — tempo de manobra (T)
 - Aba **`T Entrada ou saída`**: colunas `Berço`, `T - TEMPO (min)`, `T - TEMPO (h)`. Para entrada usa o T do berço de destino; para saída, o do berço de origem.
-- Aba **`Mudanças de entre berços`**: colunas `De`, `Para`, `Tm (min)`. Para mudança sem par na tabela, usa o padrão por par de zonas (`TM_ZONA`, ver 02).
+- Aba **`Mudanças de entre berços`**: colunas `De`, `Para`, `Tm (min)`. Para mudança sem par na tabela (par novo), usa o berço vizinho mais próximo, depois o par inverso, depois o P60 do par de zonas (`TM_ZONA`); ver 02, 3.7 e 5.19.
 
 ## 4.2 Saída do motor (`testes/esperado/E2D_esperado.csv`)
 

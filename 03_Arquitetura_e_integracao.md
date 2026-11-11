@@ -32,11 +32,14 @@ Arquivos (em `codigo_referencia/`):
 | `ep_atualizar.py` | Executa tudo, calcula os indicadores e gera a página `ep_painel.html` |
 | `ep_algoritmo.py` | Tabelas de zonas, lancha e T usadas pelo painel |
 | `escala_grafica.py` + `escala_grafica_modelos.npz` | Lê a escala gráfica (imagem) do SPPILOTS para saber quem realmente está de serviço (provisório; ver 02, 5.15) |
+| `vez_e12.py` | Número dos especiais na fila exibida: posição na vez da E12 naquele momento (06, 6.2) |
+| `tempos_passageiros.py` | Lê início e término reais na Consulta de Serviços do SPPILOTS e calcula o T automático de navio de passageiros (02, 5.20) |
 | `atualizar.bat`, `*.vbs`, `instalar_*.bat` | Automação no Windows (agendador, início do servidor, publicação) |
+| `sincronizar_repo.bat` | Envia o código, os textos e os testes para o repositório privado do motor (chamado no fim do `atualizar.bat`) |
 
 ### Limitações do protótipo (o que a produção precisa resolver)
 
-1. **A pauta futura só sai pelo navegador.** O SPPILOTS só mostra as manobras programadas (inclusive as não confirmadas, linhas brancas) numa sessão de navegador; o acesso por HTTP direto devolve apenas as executadas. Por isso o protótipo depende de uma aba de Chrome aberta e logada.
+1. **A pauta futura só sai pelo navegador.** O SPPILOTS só mostra as manobras programadas (inclusive as não confirmadas, linhas brancas) numa sessão de navegador; o acesso por HTTP direto devolve apenas as executadas. Por isso o protótipo depende de uma aba de Chrome aberta e logada. Desde 03/11/2026, se a pauta do navegador tiver mais de 8 min, a atualização entra no SPPILOTS com o próprio login e baixa a página da pauta (`psh.asp`); o Chrome continua sendo a fonte principal.
 2. **Depende de um computador ligado** e da credencial pessoal de um prático.
 3. **Sessão única (suspeita):** o login do script Python a cada 15 min pode derrubar a sessão do navegador.
 4. **Término real das manobras** não vem do SPPILOTS na pauta; usa-se o T de tabela.

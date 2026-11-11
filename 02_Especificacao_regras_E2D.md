@@ -203,7 +203,19 @@ Observação: a ordem dos testes faz `FB → FB` cair no 1º caso (`T_min['FB']`
 
 ### 3.8 Tempo de lancha L (`ep_algoritmo.gL(a, b)`)
 
-`L = ZONE_MATRIX[(min(zona(a), zona(b)), max(zona(a), zona(b)))]` (simétrica). Berços diferentes na mesma zona → L = 0. Tabela na seção 8.2.
+Desde 05/11/2026 a lancha é calculada **pela distância** (o `gL` no fim do `ep_algoritmo.py` substitui o antigo, por zonas):
+
+| De → Para | L (minutos) |
+|---|---|
+| FB → FB | 0 (a margem de 45 cobre desembarque e embarque) |
+| FB → berço | `DESEMB_AT` (8, desembarque do navio em FB até a Atalaia) + lancha da Atalaia até o berço |
+| berço → FB | lancha do berço até a Atalaia + `EMB_AT` (12, embarque no navio em FB) |
+| mesmo berço | 0 |
+| berço → berço | `round(|DIST_ATALAIA[a] − DIST_ATALAIA[b]| × 60 / 20)` |
+
+- Lancha da Atalaia até o berço (`lancha_atalaia`) = `round(DIST_ATALAIA[berço] × 60 / 20)`: distância em milhas (`DIST_ATALAIA`, informada pela Praticagem em 05/11/2026) a **20 nós**, sem tempo fixo por trecho.
+- Berço sem distância cadastrada: volta à tabela antiga por zonas (`ZONE_MATRIX`, seção 8.2); da Atalaia ao berço, `ZONE_MATRIX[FB, zona] − 12`.
+- Exemplos: TC 1.1 (2,3 milhas) → FB: 7 + 12 = **19**; TC 1.1 → 20/21 (3,5 milhas): |2,3 − 3,5| × 3 = 3,6 → **4**; FB → BTP-3 (6,4 milhas): 8 + 19 = **27**.
 
 Na disponibilidade, `a` = **destino da última manobra** do prático e `b` = **origem da manobra candidata**.
 
@@ -240,7 +252,7 @@ p está disponível para m  <=>  p nunca manobrou (last = None)  OU  avail(p, m)
 - `last` é a **última manobra do prático, qualquer que seja** (A ou B), em todo o histórico simulado, inclusive em turnos anteriores.
 - Usa o **início programado** da última manobra. O término real não entra no cálculo.
 - A disponibilidade **depende da manobra candidata** (pela margem e pelo L). O mesmo prático pode estar disponível para uma mudança e não para uma entrada no mesmo horário.
-- Exemplo real (01/01/2026): BD fez A às 07:30 FB → TC 1.1 (T = 60, Z2). Para uma entrada (sai de FB): 07:30 + 60 + 45 + L(Z2→Z1 = 20) = 09:35 → r15 = **09:30**. Para uma saída de 20/21 (Z3): 07:30 + 60 + 25 + L(Z2→Z3 = 5) = **09:00**. BD fez a B às 09:00 saindo de 20/21.
+- Exemplo real (01/01/2026): BD fez A às 07:30 FB → TC 1.1 (T = 60, Z2). Para uma entrada (sai de FB): 07:30 + 60 + 45 + L(TC 1.1 → FB = 19) = 09:34 → r15 = **09:30**. Para uma saída de 20/21: 07:30 + 60 + 25 + L(TC 1.1 → 20/21 = 4) = 08:59 → r15 = **09:00**. BD fez a B às 09:00 saindo de 20/21.
 
 ### 3.12 Ciclo A → B (estado do prático regular)
 
@@ -675,6 +687,7 @@ Implementação no protótipo:
 - `gerar_2026.py` tira a linha da pauta normal e a grava em `dados/manobras_canceladas.csv` (`DT`, `Vessel`, `From`, `To`, `Pratico`, `visto_em`), uma linha por prático; `visto_em` = hora da rodada em que o cancelamento apareceu. A manobra volta à pauta do motor só como marcação, e a chave vai para o motor em `motor_e2d/_canceladas.pkl` (variável de ambiente `CANCEL`; `motor_e2d.py` guarda em `sim._CANCEL_KEY`). Quando o prático já foi registrado, ele é passado como congelado (5.16), para que a cancelada fique com quem estava escalado; senão, o motor escolhe normalmente e o prático escolhido é registrado no arquivo depois da rodada.
 - Em `ep_sim_v3_corrigido.simular_turno`, depois de escolhido o prático da cancelada: ele sai da fila e entra na posição 1; recebe `_nao_antes[prático] = visto_em + 1 h` (testado em `is_avail`); a linha vai para a saída com status `CA` ou `CB` (C + o que ela seria: A, ou B se o prático já tinha feito a A), e o laço segue para a próxima manobra sem contar a manobra, sem Z5 e sem A/B. A regra da draga ignora as canceladas.
 - O painel mostra a linha cancelada em **verde**, como no SPPilots, com o prático que estava escalado e, na coluna A/B, o que ela seria (A ou B). O Δt conta como se ela tivesse acontecido: na linha verde, do início da manobra anterior do prático até o horário da cancelada; na manobra seguinte dele, do horário da cancelada até o início dela (decisão da Praticagem, 29/10/2026; ex.: LC, B 07:30, cancelada 13:30 → 6h00; nova A 15:00 → 1h30) (`ep_atualizar.py`, lendo `pauta_rt.csv` e `ao_vivo/canceladas_painel.csv`, gerado pelo `gerar_2026.py`). Ela não entra em nenhum cálculo do painel.
+- **Posição da cancelada (08/11/2026):** a cancelada entra na pauta do motor no seu horário, na posição que ela ocupa na ordem da pauta ao vivo (`dados/ordem_ao_vivo.csv`), e não no fim do grupo do mesmo horário. O prático dela foi escalado com a pauta daquela hora e fica fixo.
 - Sem o arquivo, ou sem `CANCEL`, o motor se comporta exatamente como antes (o conjunto de teste continua 100%). A regra é testada por `testes/testar_cancelamento.py` (uma A e uma B canceladas).
 - Efeito esperado: depois da cancelada, todo mundo "anda uma casa" (a manobra seguinte que seria de outro passa para o prático da cancelada, e assim por diante). A previsão dos especiais para as manobras ainda não escaladas no SPPILOTS (contador da E12) também anda uma casa, como aconteceria na E12; quando o SPPILOTS escala a manobra, vale o nome real. Caso real: BOW ARCHITECT, 29/10/2026 13:30 (LC), cancelado às 12:46: o LC passa para o XING YANG HAI das 14:00 e a previsão do JA passa para o ARIES STAR das 14:00.
 - Em produção, quem registra é o sistema, no momento do cancelamento (banco de dados).
@@ -865,6 +878,8 @@ Usados só no item 4 acima e no `ns_carry`:
 - Depois de cada grupo de mesmo minuto, ajuste ("catch-up"): se `next_slot < man_count`, soma 12 até alcançar `man_count`, depois subtrai 12 enquanto for maior que `man_count + 11` e, por fim, garante que não fique abaixo de `man_count` (com uma regra especial para a 2ª linha de pares).
 - Na virada D1→D2: chave remapeada por slot (`Y_d1[i] → Y_d2[i]`).
 
+**No painel (desde 10/11/2026) o número dos especiais não é este:** o painel reescreve a fila exibida com a posição de cada especial na vez da E12 naquele momento, e congela a fila no momento da escalação (06, 6.2). Esta seção continua valendo para a planilha do motor e para o conjunto de teste.
+
 **[Inferência]** Uma reimplementação pode simplificar a exibição dos especiais para "N = linhas até a próxima manobra forçada no turno; senão, 12 no fim", desde que se aceite a diferença em casos de borda de turno.
 
 ### 6.3 Planilha final do painel (`ao_vivo/E2D_2026_v6.xlsx`, aba `E2D 2026`)
@@ -950,6 +965,8 @@ A comparação é exata (sensível a maiúsculas, espaços internos, ponto e hí
 Berços que aparecem na pauta de 2026 e **não estão cadastrados** (caem na Z2 e, em entrada ou saída, em T = 60): `37.2` (10 manobras), `ALA` (4), `CS 1/2` (2), `EMB-1/2` (17), `LARGO` (2), `MORT` (4), `TC` (8). **[Ponto de atenção]**
 
 ### 8.2 `ZONE_MATRIX` (lancha, minutos, simétrica)
+
+Desde 05/11/2026 só é usada para berço sem distância cadastrada (3.8).
 
 | | Z1 | Z2 | Z3 | Z4 | Z5 |
 |---|---|---|---|---|---|
@@ -1041,7 +1058,7 @@ Validações feitas na execução de 01/01 a 20/10/2026 (cópia isolada, sem alt
 | Opcionais ATRASO / ATRASO_MAN | `motor_e2d/ep_sim_v3_corrigido.py` | l.36-39, `avail` |
 | Disponível = nunca manobrou ou avail ≤ início | `ep_sim_v3_corrigido.py` | `is_avail` |
 | T por tipo de manobra | `motor_e2d/ep_algoritmo.py` | `gT`, `tm_zona`, `TM_ZONA` |
-| Lancha L | `ep_algoritmo.py` | `gL`, `ZONE_MATRIX`, `zona`, `BERCO_ZONE` |
+| Lancha L | `ep_algoritmo.py` | `gL` (por distância, fim do arquivo), `lancha_atalaia`, `DIST_ATALAIA`, `EMB_AT`, `DESEMB_AT`; `ZONE_MATRIX` só para berço sem distância |
 | r15 | `ep_algoritmo.py` | `r15` |
 | Leitura da tabela T (int) | `ep_algoritmo.py` | `carregar_dados` |
 | Leitura da pauta e pares2 | `motor_e2d/carregar_pauta.py` | `carregar_pauta` |
@@ -1072,6 +1089,7 @@ Validações feitas na execução de 01/01 a 20/10/2026 (cópia isolada, sem alt
 | Manobra cancelada depois da escalação | `gerar_2026.py`; `motor_e2d.py`; `ep_sim_v3_corrigido.py`; `E2D_pauta_automatica.user.js` | `manobras_canceladas.csv`, `_canceladas.pkl`; `sim._CANCEL_KEY`; `_nao_antes`, bloco "MANOBRA CANCELADA" antes de "# Processar manobra" |
 | Manobras já iniciadas fora do histórico (órfãs) | `gerar_2026.py` | bloco 1 (`_orf`) |
 | Escala real (imagem do SPPILOTS) | `escala_grafica.py`; `gerar_2026.py` | `atualizar`; bloco `_EG` |
+| Fila exibida no painel: congelada na escalação e especiais pela vez da E12 (10/11/2026) | `gerar_2026.py`; `vez_e12.py` | `_vez` (gravado em `motor_e2d/_e12_vez.pkl`), `_DISP_F` (`dados/escalacao_display_v2.csv`); `vez_e12.numero`, `vez_e12.reescrever` |
 
 ---
 

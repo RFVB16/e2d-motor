@@ -22,7 +22,12 @@ Uma linha por manobra (navio de 2 práticos em uma linha, práticos separados po
 | PRT | prático(s) escalado(s) pela E2D; especiais destacados; **⚠ de risco de atraso** e **M de margem extra possível** (6.5) |
 | A/B | status no ciclo; em navio de 2 práticos mostra os dois, na ordem dos práticos (A/B, B/A, e também A/A e B/B) |
 | Δt | **Na A** (descanso longo, em **negrito amarelo com contorno preto**): do **fim** da manobra anterior do mesmo prático (início + T + lancha até a Atalaia) até o **início** da A — o mesmo número do relatório por prático (desde 31/10/2026; antes era entre inícios). **Na B** (tempo livre na Atalaia, desde 31/10/2026): da **chegada na Atalaia** depois da A (início + T + lancha) até a **saída da Atalaia** para a B (início da B − lancha até o embarque), sem deslocamento; 0 se não sobra tempo (antes era entre inícios). Em branco se a anterior foi em outro turno, em especiais e em manobras não confirmadas; em navio de 2 práticos, "ON 3h00 / BR 1h30", com o amarelo só na parte de quem está em A |
-| Escalação | fila logo após a manobra (`XX(hh:mm)` = indisponível até hh:mm). **Oculta por padrão**; botão "Mostrar/Ocultar escalação" no título (escolha salva no navegador) |
+| Escalação | fila logo após a manobra (`XX(hh:mm)` = indisponível até hh:mm). **Oculta por padrão**; botão "Mostrar/Ocultar escalação" no título (escolha salva no navegador). Regras de 10/11/2026 abaixo |
+
+**Coluna Escalação (regra da Praticagem, 10/11/2026): a fila mostra a posição naquele momento, não é previsão.**
+- **Congelada na escalação:** a fila de cada linha é gravada no momento da escalação (1 h antes do início) e não muda mais (`dados/escalacao_display_v2.csv`, chave data e hora + navio + prático). Antes disso a linha mostra a fila calculada na rodada.
+- **Especiais (`XX(n)`):** `n` = quantas chamadas da E12 faltam até a vez do especial, contadas depois do navio da linha. Primeiro os que ficaram para trás (pendentes, chamados fora de ordem), depois a volta normal a partir da seta até a posição dele. Pode passar de 12. O especial é inserido na posição `n − 1` entre os regulares. Não usa navio futuro: o especial só aparece "puxado" quando a E12 de fato o chama. Código: `vez_e12.py`; o estado da vez (seta, pendentes, escala do dia) por navio é gravado pelo `gerar_2026.py` em `motor_e2d/_e12_vez.pkl`.
+- Exemplo real (10/11/2026 11:30, DALIAN EXPRESS): `MM > CV > AG > ON > PI > HI > LZ > FX > JA(9) > BA > AB > SI(15)`: SI ainda tinha 14 chamadas da E12 antes da vez dele, por isso 15.
 
 Cor da linha pelo status do SPPILOTS: executada (rosa), confirmada/próxima (azul), em breve (lilás), não confirmada (branca). **Especial já escalado em manobra não confirmada:** linha cinza com texto branco, como no SPPILOTS.
 
@@ -37,7 +42,7 @@ Quando a manobra **começa** (linha azul) ou **termina** (linha vermelha), o nom
 Tabela por semana: período, manobras (média/dia), Δt médio efetivo, posições médias após B.
 
 ## 6.5 Definições dos cálculos
-- **Fim efetivo de uma manobra** = início (horário da pauta) + T de tabela (giro sem atracar: T da linha `GIRO …`, 02 5.14) + lancha até a Atalaia. Lancha até a Atalaia: 12 min se termina em FB; se termina num berço, lancha de FB até o berço menos 12 (Z2 8, Z3 13, Z4 18, Z5 28 min).
+- **Fim efetivo de uma manobra** = início (horário da pauta) + T de tabela (giro sem atracar: T da linha `GIRO …`, 02 5.14) + lancha até a Atalaia. Lancha até a Atalaia (desde 05/11/2026): 8 min (desembarque) se termina em FB; se termina num berço, distância da Atalaia até o berço a 20 nós (02, 3.8).
 - **DL efetivo** = início da A − fim efetivo da B anterior do mesmo prático, se não houve folga entre elas (o prático esteve escalado em todos os dias operacionais entre as duas).
 - **Disponibilidade** (igual ao motor) = arredonda ao quarto de hora mais próximo (início da última manobra + T + margem + lancha do destino dela até a origem da próxima); margem 45 min se a próxima é entrada (sai de FB), 25 min nas demais.
 - **Posições após B**: quantas manobras ocorrem entre a B de um prático e a A seguinte dele.

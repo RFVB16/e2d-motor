@@ -1,5 +1,20 @@
 # Histórico de versões
 
+## 11/11/2026
+- **Pacote atualizado com o protótipo em uso:** `codigo_referencia/` (painel, orquestrador e motor), as tabelas de T (`Tempo_T__2025_.xlsx`, com a tabela de mudanças de 314 pares de 06/11) e as listas de navios de passageiros passam a ser as mesmas do painel. Entram `vez_e12.py` e `tempos_passageiros.py`. O histórico em `dados/` vai até 11/11/2026.
+- **`testes/esperado` regerado** com as regras em vigor (lancha por distância de 05/11, tabela de T das mudanças e par novo de 06/11). Em relação ao esperado de 29/10, 9.054 das 11.320 manobras mudaram de prático: uma diferença de T ou de lancha no começo do ano muda a fila e tudo o que vem depois. `esperado_alternativo` (troca direta) também regerado. Conferido: `comparar.py` 100% nos dois; `testar_congelamento.py` e `testar_cancelamento.py` passam.
+- **Especificação:** lancha por distância descrita em 02, 3.8 (exemplo de 3.11 refeito, mesmo resultado); fila exibida do painel em 06, 6.2; posição da cancelada em 02, 5.17.
+
+## 10/11/2026
+- **Painel, coluna Escalação, a fila mostra a posição naquele momento, não é previsão (decisão da Praticagem):** a fila de cada linha fica congelada no momento da escalação (1 h antes); o número de cada especial é a posição dele na vez da E12 naquele momento, contando primeiro os pendentes e depois a volta a partir da seta, e pode passar de 12 (06, 6.2; `vez_e12.py`).
+
+## 08/11/2026
+- **Manobra cancelada na ordem da pauta:** a cancelada entra no motor na posição que tem na pauta ao vivo, e não no fim do grupo do mesmo horário; o prático dela fica fixo (02, 5.17).
+- **Painel, relatório:** vai até a hora da rodada (a manobra que começa no último minuto já aparece) e mostra o total de manobras do porto em cada dia operacional (06).
+
+## 07/11/2026
+- **T automático de navio de passageiros:** a mudança de T fica só no registro interno (`dados/T_passageiros_mudancas.csv`) e não aparece mais no painel (02, 5.20).
+
 ## 06/11/2026
 - **T das mudanças, método registrado e grupos reais (02, 5.19 e A.2):** tabela de 293 pares calculada com 717 mudanças reais (2025 + jan–set/2026). Ordem: berço → berço; grupo → berço ou berço → grupo; grupo → grupo (mediana); zona → zona (P60, Z3 sul e norte); padrão. Mínimo de 5 mudanças por nível, valores arredondados para cima em múltiplos de 5, sempre no sentido da mudança. Os berços numerados deixam de ser agrupados por zona e passam aos grupos definidos pela Praticagem (29–34, 35–39, 12P–20/21, 23–OUT etc.); EMBR. passa à Z3 norte. 67 pares mudaram, nenhum em 30 min ou mais.
 - **T das mudanças, nível 5 (02, 5.19):** o "padrão do motor" dá lugar a uma regra provisória para mudanças dentro da Alemoa (destino AL 1/AL 2: 90; AL 3/AL 4: 75) e dentro do BTP (80), com todas as combinações na tabela (314 pares). Provisória: substituída pelo valor calculado quando houver 5 mudanças reais. Mudanças entre Alemoa, BTP e Cosipa não ocorrem.

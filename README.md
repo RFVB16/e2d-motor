@@ -10,7 +10,8 @@ Comece por [`00_LEIA-ME.md`](00_LEIA-ME.md).
 cd testes
 python rodar_referencia.py
 python comparar.py saida_referencia.csv     # tem de dar 100% em Pratico, Status e Escalacao
-python testar_congelamento.py               # testa a escalação congelada: tem de dar PASSOU nos 2 testes
+python testar_congelamento.py               # testa a escalação congelada: tem de dar PASSOU nos 3 testes
+python testar_cancelamento.py               # testa a manobra cancelada: tem de dar PASSOU nos 2 casos
 ```
 
 ## Regras de trabalho neste repositório

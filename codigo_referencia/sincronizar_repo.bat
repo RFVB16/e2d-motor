@@ -1,6 +1,7 @@
 @echo off
 REM Envia para o GitHub privado (RFVB16/e2d-motor) o codigo atual da pasta E2D NOVA.
 REM Chamado no fim do atualizar.bat. So envia se algum arquivo de codigo mudou. Nunca envia senha nem dados da escala.
+REM 11/11/2026: inclui vez_e12.py (usado pelo gerar_2026.py desde 10/11) e sistema_creditos.py
 REM Desde 29/10/2026 envia tambem os textos e os testes do PACOTE_IMPLEMENTACAO (nunca config.json nem dados).
 setlocal
 set "SRC=%~dp0"
@@ -10,11 +11,11 @@ if not exist "%REPO%\.git" (
   exit /b 0
 )
 set "DST=%REPO%\codigo_referencia"
-for %%F in (E2D_pauta_automatica.user.js atualizar.bat atualizar_oculto.vbs consertar_site.bat ep_algoritmo.py ep_atualizar.py ep_server.py escala_grafica.py escala_grafica_modelos.npz gerar_2026.py tempos_passageiros.py instalar_servidor_inicio.bat raspar_historico.py servidor_oculto.vbs sincronizar_repo.bat) do (
+for %%F in (E2D_pauta_automatica.user.js atualizar.bat atualizar_oculto.vbs consertar_site.bat ep_algoritmo.py ep_atualizar.py ep_server.py escala_grafica.py escala_grafica_modelos.npz gerar_2026.py tempos_passageiros.py vez_e12.py instalar_servidor_inicio.bat raspar_historico.py servidor_oculto.vbs sincronizar_repo.bat) do (
   if exist "%SRC%%%F" copy /Y "%SRC%%%F" "%DST%\%%F" >nul
 )
 if exist "%SRC%instalar_agendamento_10min.bat" copy /Y "%SRC%instalar_agendamento_10min.bat" "%DST%\instalar_agendamento.bat" >nul
-for %%F in (carregar_pauta.py ep_algoritmo.py ep_sim_v3_corrigido.py grupo_a_data.py motor_e2d.py nova_escalacao.py) do (
+for %%F in (carregar_pauta.py ep_algoritmo.py ep_sim_v3_corrigido.py grupo_a_data.py motor_e2d.py nova_escalacao.py sistema_creditos.py) do (
   if exist "%SRC%motor_e2d\%%F" copy /Y "%SRC%motor_e2d\%%F" "%DST%\motor_e2d\%%F" >nul
 )
 if exist "%SRC%inputs\Tempo_T__2025_.xlsx" copy /Y "%SRC%inputs\Tempo_T__2025_.xlsx" "%DST%\inputs\Tempo_T__2025_.xlsx" >nul

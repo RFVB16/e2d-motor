@@ -1,6 +1,6 @@
 # Pacote de implementação — E2D (Escala 2 e Desce)
 
-Praticagem do Porto de Santos (ZP-16) · versão de 28/10/2026
+Praticagem do Porto de Santos (ZP-16) · versão de 11/11/2026
 
 Este pacote reúne o que uma equipe de TI precisa para implementar a E2D em produção e operá-la num **período de teste em paralelo com a escala atual (E12)**. A E2D já existe como protótipo funcionando (simulação em Python + painel web publicado), validado contra os dados reais de 2025 e 2026. O trabalho de implementação é transformar esse protótipo num sistema robusto, integrado ao SPPILOTS e operado pela Praticagem.
 
@@ -20,10 +20,10 @@ Este pacote reúne o que uma equipe de TI precisa para implementar a E2D em prod
 
 | Pasta | Conteúdo |
 |---|---|
-| `codigo_referencia/` | Código do protótipo atual (Python). É a **referência oficial** das regras: em caso de dúvida entre um texto e o código, vale o código. Mesma estrutura de pastas do protótipo em uso. |
+| `codigo_referencia/` | Código do protótipo atual (Python), igual ao do painel em uso em 11/11/2026. É a **referência oficial** das regras: em caso de dúvida entre um texto e o código, vale o código. Mesma estrutura de pastas do protótipo em uso. Inclui `vez_e12.py` (número dos especiais na fila exibida, 06 6.2) e `tempos_passageiros.py` (T de navio de passageiros, 02 5.20). Não inclui o painel paralelo "marco zero" (`gerar_marco0.py`, `painel_marco0.py`), que é só um estudo; as linhas do `atualizar.bat` que o chamam podem ser ignoradas. |
 | `codigo_referencia/motor_e2d/` | Motor da E2D (simulação da fila) |
-| `testes/` | Conjunto de teste com entrada e resultado esperado (01/01 a 13/11/2026, 11.320 manobras; esperado regerado em 29/10/2026 com a nova escalação indireta, o modelo original; o esperado da troca direta fica em `esperado_alternativo/`) e os scripts `rodar_referencia.py`, `comparar.py` e `testar_congelamento.py` (teste da escalação congelada, 02 5.16) |
-| `dados/` | Dados reais de 2026 para estudo: pauta consolidada com início/fim reais e histórico do SPPILOTS com o prático de cada manobra |
+| `testes/` | Conjunto de teste com entrada e resultado esperado (01/01 a 13/11/2026, 11.320 manobras; esperado regerado em 11/11/2026 com as regras em vigor: lancha por distância, tabela de T das mudanças de 06/11 e par novo pelo berço vizinho; o esperado da troca direta fica em `esperado_alternativo/`) e os scripts `rodar_referencia.py`, `comparar.py`, `testar_congelamento.py` (teste da escalação congelada, 02 5.16) e `testar_cancelamento.py` (manobra cancelada, 02 5.17) |
+| `dados/` | Dados reais de 2026 para estudo: pauta consolidada com início/fim reais (jan–set) e histórico do SPPILOTS com o prático de cada manobra (até 11/11/2026) |
 
 ## Teste rápido (5 minutos)
 
