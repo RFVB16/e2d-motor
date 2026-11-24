@@ -290,6 +290,80 @@ try:
 except Exception as _e:
     print(f'[ALERTA ESCALA] não gravado: {_e}')
 
+# ── ESCALA MUDOU DEPOIS DE CONGELAR → DESCONGELA (24/11/2026) ──────────────────────────────
+# Caso de 23/11/2026: às 06:35 a escala lida tinha GA na vaga 1; às 09:36 passou a CF. As manobras das 08:00 e 08:30
+# ficaram congeladas com a fila errada. Agora: se a escala de um dia já começado mudar em relação à rodada anterior,
+# grava um período em dados/descongelar.json (desde as 07:30 daquele dia) e avisa no painel; o motor refaz a sequência.
+import json as _json
+_EV = DIR / 'dados' / 'escala_vigente.json'
+_agora_e = dt.datetime.now()
+try:
+    _ev_ant = _json.loads(_EV.read_text(encoding='utf-8')) if _EV.exists() else None
+except Exception:
+    _ev_ant = None
+_jan_e = [d for d in sorted(escala) if _agora_e.date() - dt.timedelta(days=2) <= d <= _agora_e.date() + dt.timedelta(days=1)]
+_ev_atual = {d.isoformat(): [x or '' for x in escala[d][1]] for d in _jan_e}
+if _ev_ant is not None:
+    _mud = []
+    for d in _jan_e:
+        k = d.isoformat()
+        if k in _ev_ant and _ev_ant[k] != _ev_atual[k] and dt.datetime.combine(d, dt.time(7, 30)) <= _agora_e:
+            _vg = [f'vaga {i + 1} {a or "?"}→{b or "?"}' for i, (a, b) in enumerate(zip(_ev_ant[k], _ev_atual[k])) if a != b]
+            _mud.append((d, _vg))
+    if _mud:
+        _d_ini = min(d for d, _ in _mud)
+        _det = '; '.join(f'{d:%d/%m}: ' + ', '.join(v) for d, v in _mud)
+        _item = {'de': f'{_d_ini:%Y-%m-%d} 07:30', 'registradas_antes_de': f'{_agora_e:%Y-%m-%d %H:%M}',
+                 'motivo': f'automático: a escala mudou depois da virada ({_det}); sequência refeita desde a virada'}
+        _DSC = DIR / 'dados' / 'descongelar.json'
+        try:
+            _lst = _json.loads(_DSC.read_text(encoding='utf-8')) if _DSC.exists() else []
+            _lst.append(_item)
+            _DSC.write_text('[\n' + ',\n'.join(' ' + _json.dumps(x, ensure_ascii=False) for x in _lst) + '\n]\n', encoding='utf-8')
+            _msg = f'escala mudou ({_det}): sequência refeita desde {_d_ini:%d/%m} 07:30'
+        except Exception as _e:
+            _msg = f'escala mudou ({_det}), mas não consegui gravar dados/descongelar.json: {_e} — conferir'
+        print(f'[escala] {_msg}')
+        if 'não consegui' in _msg:
+            _ALERTAS.append('AVISO: ' + _msg)
+# aviso fica no painel por 3 h depois de cada refazimento automático
+try:
+    _DSC = DIR / 'dados' / 'descongelar.json'
+    for _it in (_json.loads(_DSC.read_text(encoding='utf-8')) if _DSC.exists() else []):
+        _rg = pd.Timestamp(_it['registradas_antes_de'])
+        if str(_it.get('motivo', '')).startswith('automático') and pd.Timestamp(_agora_e) - _rg <= pd.Timedelta(hours=3):
+            _ALERTAS.append(f"AVISO: a escala mudou às {_rg:%H:%M} de {_rg:%d/%m}; sequência refeita desde {pd.Timestamp(_it['de']):%d/%m %H:%M} — "
+                            + _it['motivo'].split('(', 1)[-1].split(')')[0])
+except Exception:
+    pass
+try:
+    _EV.write_text(_json.dumps({**(_ev_ant or {}), **_ev_atual}, ensure_ascii=False, indent=0), encoding='utf-8')
+except Exception as _e:
+    print(f'[escala] escala_vigente.json não gravado: {_e}')
+
+# ── ESCALA GRÁFICA ATUALIZADA? (24/11/2026) ─────────────────────────────────────────────────
+# A virada das 07:30 não pode usar imagem velha da escala: imagem do mês com mais de 75 min (30 min entre 05:30 e 07:30)
+# vira alerta vermelho. Entre 05:30 e 07:30 o escala_grafica.py baixa a imagem de novo se tiver mais de 15 min.
+_IMG = DIR / 'dados' / 'escala_grafica' / f'{_agora_e:%Y-%m}.jpg'
+if _IMG.exists():
+    _idade = (time.time() - _IMG.stat().st_mtime) / 60
+    _lim = 30 if dt.time(5, 30) <= _agora_e.time() < dt.time(7, 30) else 75   # perto da virada, mais exigente
+    if _idade > _lim:
+        _ALERTAS.append(f'escala gráfica do SPPilots sem atualizar há {_idade:.0f} min — a escala pode estar desatualizada')
+else:
+    _ALERTAS.append('escala gráfica do SPPilots do mês não encontrada — usando a escala planejada')
+# Pilha da escala gráfica com 2+ nomes não riscados e sem manobra que desempate: usa o último, mas avisa.
+_AMB = DIR / 'dados' / 'escala_grafica' / 'ambiguas.json'
+try:
+    for _x in (_json.loads(_AMB.read_text(encoding='utf-8')) if _AMB.exists() else []):
+        _ALERTAS.append(f"escala de {_x['dia'][8:10]}/{_x['dia'][5:7]}, vaga {_x['vaga']}: {' e '.join(_x['nomes'])} sem risco — usando {_x['usado']}; conferir")
+except Exception:
+    pass
+try:
+    (DIR / 'ao_vivo' / 'alertas_escala.json').write_text(_json.dumps(_ALERTAS, ensure_ascii=False), encoding='utf-8')
+except Exception:
+    pass
+
 # turnos D1+D2
 dias = sorted(escala)
 turnos = []
@@ -635,6 +709,15 @@ _disp = {}
 try:
     if _DISP_F.exists():
         _dd = pd.read_csv(_DISP_F, dtype=str, keep_default_na=False)
+        # fila exibida também é refeita nos períodos descongelados (dados/descongelar.json; 24/11/2026)
+        _DSC_D = DIR / 'dados' / 'descongelar.json'
+        if _DSC_D.exists() and len(_dd) and 'registrado_em' in _dd:
+            import json as _jd
+            _dtd = pd.to_datetime(_dd['DT'], errors='coerce'); _rgd = pd.to_datetime(_dd['registrado_em'], errors='coerce')
+            _drp = pd.Series(False, index=_dd.index)
+            for _it in _jd.loads(_DSC_D.read_text(encoding='utf-8')):
+                _drp |= (_dtd >= pd.Timestamp(_it['de'])) & (_rgd < pd.Timestamp(_it['registradas_antes_de']))
+            _dd = _dd[~_drp]
         _disp = {(a, b, c): e for a, b, c, e in zip(_dd.DT, _dd.Vessel, _dd.Pratico, _dd.Escalacao)}
     _agora_d = pd.Timestamp(dt.datetime.now()); _novas_d = []
     for _row in openpyxl.load_workbook(MOTOR / OUT_M, read_only=True).worksheets[0].iter_rows(min_row=2, values_only=True):

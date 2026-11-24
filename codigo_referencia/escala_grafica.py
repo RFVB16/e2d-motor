@@ -186,15 +186,27 @@ def quem_trabalha(seq, banco, reais=None):
     if len(cand) > 1 and reais:
         ok = [x for x in cand if x[0] in reais]
         if ok: return ok[0]
-    return cand[0]
+    # 24/11/2026: sem manobra que desempate, vale o ÚLTIMO não riscado (o substituto mais recente, escrito embaixo).
+    # Casos conhecidos: 30/10 GU -> AB (trabalhou AB), 23/11 GA -> CF (trabalhou CF); 14/10 CF -> SN (trabalhou CF).
+    # A pilha ambígua também vai para o alerta do painel (dados/escala_grafica/ambiguas.json).
+    return cand[-1]
+
+AMBIGUAS = []   # pilhas com 2+ não riscados sem manobra que desempate (preenchida por escala_do_turno)
 
 def escala_do_turno(imgs, d1, banco, reais=None):
     """{D1: [12 siglas], D2: [12 siglas]}. Slot sem leitura num dia usa o do outro dia do turno.
     reais: {data: práticos com manobra real naquele dia operacional} (desempata pilhas com 2+ não riscados)."""
     d2 = d1 + dt.timedelta(days=1)
     rt = set().union(*[(reais or {}).get(d, set()) for d in (d1, d2)])
-    r1 = [quem_trabalha(s, banco, rt) for s in pilhas(imgs, d1, d1)]
-    r2 = [quem_trabalha(s, banco, rt) for s in pilhas(imgs, d2, d1)]
+    p1, p2 = pilhas(imgs, d1, d1), pilhas(imgs, d2, d1)
+    r1 = [quem_trabalha(s, banco, rt) for s in p1]
+    r2 = [quem_trabalha(s, banco, rt) for s in p2]
+    for _dia, _pp in ((d1, p1), (d2, p2)):
+        for _i, _s in enumerate(_pp):
+            _c = [banco.ler(c)[0] for c in _s if tem_texto(c) and not riscado(c)]
+            _c = [x for x in _c if x]
+            if len(_c) > 1 and not [x for x in _c if x in rt]:
+                AMBIGUAS.append({'dia': _dia.isoformat(), 'vaga': _i + 1, 'nomes': _c, 'usado': _c[-1]})
     w1 = [a[0] if a[0] else b[0] for a, b in zip(r1, r2)]
     w2 = [b[0] if b[0] else a[0] for a, b in zip(r1, r2)]
     sim = min([x[1] for x in r1 + r2 if x[0]] or [0])
@@ -243,6 +255,8 @@ def atualizar(senha, pasta, max_idade_min=50, hoje=None):
     ant = hoje.replace(day=1) - dt.timedelta(days=1); prox = (hoje.replace(day=28) + dt.timedelta(days=5)).replace(day=1)
     if hoje.day <= 8: meses.add((ant.year, ant.month))
     if hoje.day >= 22: meses.add((prox.year, prox.month))
+    if dt.time(5, 30) <= dt.datetime.now().time() < dt.time(7, 30):
+        max_idade_min = min(max_idade_min, 15)   # perto da virada: imagem com no máximo 15 min (24/11/2026)
     sess = None; imgs = {}
     for (a, m) in sorted(meses):
         f = cache / f'{a}-{m:02d}.jpg'
@@ -268,6 +282,7 @@ def atualizar(senha, pasta, max_idade_min=50, hoje=None):
     reais = _reais(pasta)
     saida = pasta / 'inputs' / 'escala_grafica.json'
     res = json.loads(saida.read_text(encoding='utf-8')) if saida.exists() else {}
+    AMBIGUAS.clear()
     for (a, m) in imgs:
         for d1 in _dias_d1(a, m):
             try:
@@ -276,7 +291,33 @@ def atualizar(senha, pasta, max_idade_min=50, hoje=None):
                 print(f'[Escala gráfica] ERRO no turno {d1}: {e}'); continue
             for d, w in E.items():
                 if (d.year, d.month) in imgs: res[d.isoformat()] = w
+    _ant = json.loads(saida.read_text(encoding='utf-8')) if saida.exists() else {}
     saida.write_text(json.dumps(res, ensure_ascii=False, indent=0), encoding='utf-8')
+    # 24/11/2026: registro de cada leitura (ontem, hoje, amanhã) e cópia da imagem quando a leitura muda,
+    # para poder conferir depois o que o painel leu (caso de 23/11/2026: GA x CF na vaga 1).
+    try:
+        import shutil
+        agora = dt.datetime.now()
+        dias_v = [(hoje + dt.timedelta(days=k)).isoformat() for k in (-1, 0, 1)]
+        log = cache / 'leituras.csv'
+        novo = not log.exists()
+        with open(log, 'a', encoding='utf-8') as f:
+            if novo: f.write('lido_em,dia,' + ','.join(f'P{i}' for i in range(1, 13)) + '\n')
+            for d in dias_v:
+                if d in res: f.write(f'{agora:%Y-%m-%d %H:%M},{d},' + ','.join(x or '' for x in res[d]) + '\n')
+        mud = [d for d in dias_v if res.get(d) != _ant.get(d)]
+        if mud:
+            hist = cache / 'historico'; hist.mkdir(exist_ok=True)
+            for (a, m) in imgs:
+                f = cache / f'{a}-{m:02d}.jpg'
+                if f.exists(): shutil.copy2(f, hist / f'{a}-{m:02d}_lida_{agora:%Y%m%d-%H%M}.jpg')
+            print(f'[Escala gráfica] leitura mudou em {", ".join(mud)}: imagem guardada em dados/escala_grafica/historico')
+        for f in (cache / 'historico').glob('*.jpg') if (cache / 'historico').exists() else []:
+            if (time.time() - f.stat().st_mtime) > 15 * 86400: f.unlink()
+        amb = [x for x in AMBIGUAS if (hoje - dt.timedelta(days=1)).isoformat() <= x['dia'] <= (hoje + dt.timedelta(days=1)).isoformat()]
+        (cache / 'ambiguas.json').write_text(json.dumps(amb, ensure_ascii=False), encoding='utf-8')
+    except Exception as e:
+        print(f'[Escala gráfica] registro da leitura não gravado: {e}')
     for d in (hoje, hoje + dt.timedelta(days=1)):
         print(f'[Escala gráfica] {d:%d/%m}: {" ".join(x or "??" for x in res.get(d.isoformat(), []))}')
     return res
