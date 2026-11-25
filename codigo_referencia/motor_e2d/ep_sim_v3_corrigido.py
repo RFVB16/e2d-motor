@@ -143,6 +143,7 @@ def simular_turno(turno, fila_ini, man_df, T_min, T_mud, pares2,
     _draga_ent = set(_draga_par.values())
     _draga_reserva = {}   # prático da entrada da draga -> índice da saída que ele vai fazer
     _nao_antes = {}       # prático de manobra cancelada -> só pode pegar manobra a partir deste horário
+    _canc_pos = {}        # 25/11/2026: navio de 2 práticos cancelado -> os dois vão à frente NA ORDEM em que estavam
 
     fila         = list(fila_ini)
     fila_display = list(fila_ini)
@@ -718,7 +719,10 @@ def simular_turno(turno, fila_ini, man_df, T_min, T_mud, pares2,
             if _cv is not None and prat not in ESPECIAIS:
                 if prat in fila_display:
                     fila_display.remove(prat)
-                fila_display.insert(0, prat)
+                _ck_c = (str(man['Data']), str(man['Hora']), str(man['Vessel']).strip())
+                _pc = _canc_pos.get(_ck_c, 0)          # o 2º prático do mesmo navio fica logo depois do 1º
+                fila_display.insert(min(_pc, len(fila_display)), prat)
+                _canc_pos[_ck_c] = _pc + 1
                 _lim = pd.Timestamp(_cv.get('visto_em') or dt) + pd.Timedelta(hours=1)
                 _nao_antes[prat] = max(_nao_antes.get(prat, _lim), _lim)
                 esc_disp = make_esc(dt, m_fr)
