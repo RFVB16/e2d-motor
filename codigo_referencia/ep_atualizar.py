@@ -1091,8 +1091,9 @@ def montar_dados(manobras, rt_idx):
     else:
         ini_hoje = now.replace(hour=7, minute=30, second=0, microsecond=0) - timedelta(days=1)
 
-    # HISTORICO comeca 1 dia operacional ANTES (07:30 ontem do dia operacional vigente)
-    ini_hist = ini_hoje - timedelta(days=1)
+    # HISTORICO comeca 2 dias operacionais ANTES (25/11/2026, pedido do Rodrigo): os 2 dias anteriores inteiros
+    # + hoje até agora, para ficar sempre um turno inteiro (D1+D2) em vermelho na tela. Antes: só desde ontem 07:30.
+    ini_hist = ini_hoje - timedelta(days=2)
 
     # Inicio da pauta RT (primeira manobra que o SPPILOTS esta mostrando).
     inicio_rt = None

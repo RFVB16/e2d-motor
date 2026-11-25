@@ -121,11 +121,27 @@ if not rt.empty and 'Status' in rt:
         for _r in _canc.itertuples():
             _tem[_kc(_r.DT, _r.Vessel, _r.From, _r.To)] += 1
         _vist = defaultdict(int); _add = []
+        _2p = defaultdict(int)      # 25/11/2026: navio de 2 práticos cancelado vem com UMA linha e dois_prat falso
         for _r in _cv_rt.itertuples():
             _k = _kc(_r.DT, _r.Vessel, _r.From, _r.To); _vist[_k] += 1
-            if _vist[_k] > _tem[_k]:        # navio de 2 práticos: uma linha por prático
+            _obs = str(getattr(_r, 'OBS', '') or '').upper()
+            if '2PLT' in _obs or str(getattr(_r, 'dois_prat', '')).strip().lower() in ('true', '1'):
+                _2p[_k] = 2
+        # práticos que a E2D já tinha escalado nela (escalação congelada): todos são "cancelados"
+        try:
+            _cgc = pd.read_csv(DIR / 'dados' / 'escalacao_finalizada.csv', dtype=str)
+            _nfz = _cgc.assign(_t=pd.to_datetime(_cgc.DT, errors='coerce').dt.floor('min'),
+                               _v=_cgc.Vessel.astype(str).str.strip()).groupby(['_t', '_v']).Pratico.nunique().to_dict()
+        except Exception:
+            _nfz = {}
+        _ve = {}
+        for _r in _canc.itertuples():
+            _ve.setdefault(_kc(_r.DT, _r.Vessel, _r.From, _r.To), _r.visto_em)
+        for _k, _n in _vist.items():
+            _need = max(_n, _2p.get(_k, 0), min(2, _nfz.get((_k[0], _k[1]), 0)))
+            for _ in range(_need - _tem[_k]):   # uma linha por prático
                 _add.append({'DT': _k[0].strftime('%Y-%m-%d %H:%M'), 'Vessel': _k[1], 'From': _k[2], 'To': _k[3],
-                             'Pratico': '', 'visto_em': _agora_c})
+                             'Pratico': '', 'visto_em': _ve.get(_k, _agora_c)})
         if _add:
             _canc = pd.concat([_canc, pd.DataFrame(_add)], ignore_index=True); _canc_mudou = True
             print(f'[cancelada] {len(_add)} manobra(s) cancelada(s) depois da escalação: prático escalado vai para a frente')
